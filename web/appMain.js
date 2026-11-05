@@ -1,17 +1,23 @@
 /**
  * DramaForge Studio - 导演工作台前端核心控制器 (appMain.js)
- * 负责管理：项目/剧集切换、设定资产展示、四联导演监视器分镜编辑、
- * 首尾关键帧生成、FL2VA/Wan2.2 视频生成、帧锁接力与整集母带合成。
+ * 负责管理：项目/剧集切换、设定资产展示、横向胶片时间轴导轨、
+ * 四联导演监视器分镜编辑、首尾关键帧生成、FL2VA/Wan2.2 视频生成、
+ * 零衰减帧锁接力、高清审片灯箱、原生 <dialog> 控制与整集母带合成。
  */
 
 let currentState = {
   projects: [],
   activeProjectId: null,
   activeEpisodeId: null,
+  activeShotId: null,
   workspace: null,
   assetFilter: "all",
+  shotFilter: "all",
+  shotSearchKeyword: "",
+  ledgerCollapsed: false,
   settings: {},
   pollTimer: null,
+  saveIndicatorTimer: null,
 };
 
 function escapeHtml(text) {
@@ -20,6 +26,97 @@ function escapeHtml(text) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+/**
+ * 悬浮非阻塞式 Toast 通知，替代传统阻塞式 alert()
+ */
+function showToast(message, type = "info") {
+  const stack = document.getElementById("toastStack");
+  if (!stack) return;
+  const item = document.createElement("div");
+  item.className = `toastItem ${type}`;
+  const icon =
+    type === "success" ? "✅" : type === "error" ? "❌" : "🎬";
+  item.innerHTML = `<span>${icon}</span><span>${escapeHtml(message)}</span>`;
+  stack.appendChild(item);
+  setTimeout(() => {
+    item.style.opacity = "0";
+    item.style.transform = "translateY(8px)";
+    item.style.transition = "all 0.2s ease";
+    setTimeout(() => item.remove(), 220);
+  }, 3400);
+}
+
+/**
+ * 顶部状态栏自动保存微反馈
+ */
+function flashSaveIndicator(text = "✓ 已自动保存") {
+  const el = document.getElementById("saveIndicator");
+  if (!el) return;
+  el.textContent = text;
+  el.classList.add("visible");
+  if (currentState.saveIndicatorTimer) {
+    clearTimeout(currentState.saveIndicatorTimer);
+  }
+  currentState.saveIndicatorTimer = setTimeout(() => {
+    el.classList.remove("visible");
+  }, 1800);
+}
+
+/**
+ * 原生 <dialog> 开启与关闭封装，并附带 Safari closedby="any" 渐进增强回退
+ */
+function openDialog(dialogId) {
+  const dialog = document.getElementById(dialogId);
+  if (!dialog) return;
+  if (typeof dialog.showModal === "function") {
+    if (!dialog.open) {
+      dialog.showModal();
+    }
+  } else {
+    dialog.setAttribute("open", "");
+  }
+}
+
+function closeModal(dialogId) {
+  const dialog = document.getElementById(dialogId);
+  if (!dialog) return;
+  if (typeof dialog.close === "function" && dialog.open) {
+    dialog.close();
+  } else {
+    dialog.removeAttribute("open");
+  }
+}
+
+function initDialogLightDismissFallback() {
+  if (!("closedBy" in HTMLDialogElement.prototype)) {
+    document.querySelectorAll('dialog[closedby="any"]').forEach((dialog) => {
+      dialog.addEventListener("click", (e) => {
+        const rect = dialog.getBoundingClientRect();
+        const inDialog =
+          e.clientX >= rect.left &&
+          e.clientX <= rect.right &&
+          e.clientY >= rect.top &&
+          e.clientY <= rect.bottom;
+        if (!inDialog) {
+          dialog.close();
+        }
+      });
+    });
+  }
+}
+
+/**
+ * 高清大图审片灯箱 (Cinema Lightbox)
+ */
+function openLightbox(imageUrl, captionText = "画面细节审片") {
+  if (!imageUrl) return;
+  const img = document.getElementById("lightboxImage");
+  const cap = document.getElementById("lightboxCaption");
+  if (img) img.src = imageUrl;
+  if (cap) cap.textContent = captionText;
+  openDialog("lightboxModal");
 }
 
 async function apiFetch(url, options = {}) {
@@ -35,6 +132,7 @@ async function apiFetch(url, options = {}) {
 }
 
 async function initApp() {
+  initDialogLightDismissFallback();
   try {
     await refreshStatus();
     await loadProjects();
@@ -42,6 +140,7 @@ async function initApp() {
     currentState.pollTimer = setInterval(pollRunningTasks, 3000);
   } catch (err) {
     console.error("初始化失败:", err);
+    showToast(`工作台初始化异常: ${err.message}`, "error");
   }
 }
 
@@ -64,7 +163,7 @@ async function loadProjects(preferredId = null) {
   currentState.projects = data.projects || [];
   const sel = document.getElementById("projectSelect");
   if (currentState.projects.length === 0) {
-    sel.innerHTML = `<option value="">暂无项目，请点击上方导入或新建</option>`;
+    sel.innerHTML = `<option value="">暂无项目，请点击上方新建短剧</option>`;
     return;
   }
   sel.innerHTML = currentState.projects
@@ -100,8 +199,21 @@ async function loadWorkspace(projectId, episodeId = null) {
   renderAssetList(ws.assets || []);
   renderMasterBanner(ws.activeEpisode);
   renderSceneLedger(ws.activeEpisode);
+  renderFilmstripRibbon(ws.shots || []);
   renderShotCards(ws.shots || []);
   renderTaskList(ws.tasks || []);
+}
+
+function toggleSceneLedgerCollapse() {
+  currentState.ledgerCollapsed = !currentState.ledgerCollapsed;
+  const grid = document.getElementById("sceneLedgerGrid");
+  const btn = document.getElementById("toggleLedgerBtn");
+  if (grid) {
+    grid.style.display = currentState.ledgerCollapsed ? "none" : "grid";
+  }
+  if (btn) {
+    btn.textContent = currentState.ledgerCollapsed ? "展开账本" : "收起账本";
+  }
 }
 
 function renderSceneLedger(activeEpisode) {
@@ -114,6 +226,7 @@ function renderSceneLedger(activeEpisode) {
     return;
   }
   panel.style.display = "flex";
+  grid.style.display = currentState.ledgerCollapsed ? "none" : "grid";
   grid.innerHTML = ledger
     .map((sc) => {
       const castHtml = (sc.allowedCharacters || [])
@@ -182,9 +295,11 @@ function renderAssetList(assets) {
   }
   container.innerHTML = filtered
     .map((a) => {
+      const typeCn =
+        a.assetType === "character" ? "角色" : a.assetType === "scene" ? "场景" : "道具";
       const thumbHtml = a.imageUrl
-        ? `<img class="assetThumb" src="${escapeHtml(a.imageUrl)}" alt="${escapeHtml(a.name)}" />`
-        : `<div class="assetThumb" style="display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--text-muted);">${a.assetType === "character" ? "角色" : a.assetType === "scene" ? "场景" : "道具"}</div>`;
+        ? `<img class="assetThumb" src="${escapeHtml(a.imageUrl)}" alt="${escapeHtml(a.name)}" onclick="openLightbox('${escapeHtml(a.imageUrl)}', '@${escapeHtml(a.name)} · 设定资产原图')" style="cursor:zoom-in;" />`
+        : `<div class="assetThumb" style="display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--text-muted);">${typeCn}</div>`;
       const eraBadge = a.eraTag
         ? `<span class="eraBadge">${escapeHtml(a.eraTag)}</span>`
         : "";
@@ -193,7 +308,7 @@ function renderAssetList(assets) {
           ${thumbHtml}
           <div style="min-width:0;">
             <div class="assetName">@${escapeHtml(a.name)} ${eraBadge}</div>
-            <div style="font-size:11px; color:var(--amber-gold);">${escapeHtml(a.roleTag || a.assetType)}</div>
+            <div style="font-size:11px; color:var(--amber-gold);">${escapeHtml(a.roleTag || typeCn)}</div>
             <div class="assetDesc" title="${escapeHtml(a.visualPrompt)}">${escapeHtml(a.visualPrompt || "暂无视觉描述")}</div>
           </div>
         </div>
@@ -217,6 +332,114 @@ function renderMasterBanner(activeEpisode) {
   document.getElementById("masterMetaText").textContent = `当前剧集《${activeEpisode.title}》已完成多镜无缝拼接，支持直接下载成片或导入剪映微调。`;
 }
 
+/**
+ * 渲染横向胶片时间轴导轨 (Filmstrip Storyboard Ribbon)
+ */
+function renderFilmstripRibbon(shots) {
+  const ribbon = document.getElementById("filmstripRibbon");
+  if (!ribbon) return;
+  if (!shots || !shots.length) {
+    ribbon.style.display = "none";
+    return;
+  }
+  ribbon.style.display = "flex";
+  ribbon.innerHTML = shots
+    .map((s, idx) => {
+      const isAction = s.shotCategory === "action_fl2va";
+      const isActive = currentState.activeShotId === s.id;
+      const firstThumb = s.firstFrameUrl
+        ? `<img src="${escapeHtml(s.firstFrameUrl)}" alt="S${s.shotNumber}-首" />`
+        : `<div class="emptyMini">首</div>`;
+      const lastThumb = s.lastFrameUrl
+        ? `<img src="${escapeHtml(s.lastFrameUrl)}" alt="S${s.shotNumber}-尾" />`
+        : `<div class="emptyMini">尾</div>`;
+      const hasVideoDot = s.videoUrl
+        ? `<span style="color:var(--emerald-ok);" title="成片已就绪">●</span>`
+        : `<span style="color:var(--text-muted);" title="待渲染成片">○</span>`;
+      const lockConnector =
+        idx > 0
+          ? `<div class="filmLockConnector ${Number(s.lockFromPrevEnd) === 1 ? "locked" : ""}" title="${
+              Number(s.lockFromPrevEnd) === 1
+                ? "已启用零衰减帧锁：本镜首帧 = 上镜尾帧"
+                : "机位自由切换"
+            }">${Number(s.lockFromPrevEnd) === 1 ? "🔗" : "·"}</div>`
+          : "";
+      return `
+        ${lockConnector}
+        <div class="filmCell ${isAction ? "actionCell" : "dialogueCell"} ${isActive ? "activeShot" : ""}" onclick="scrollToShot(${s.id})">
+          <div class="filmCellHeader">
+            <span>#${s.shotNumber} ${isAction ? "⚡" : "💬"}</span>
+            <span>${s.durationSec}s ${hasVideoDot}</span>
+          </div>
+          <div class="filmThumbPair">
+            ${firstThumb}
+            ${lastThumb}
+          </div>
+          <div class="filmCellTitle" title="${escapeHtml(s.title)}">${escapeHtml(s.title)}</div>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+function scrollToShot(shotId) {
+  currentState.activeShotId = shotId;
+  if (currentState.workspace) {
+    renderFilmstripRibbon(currentState.workspace.shots || []);
+  }
+  const card = document.getElementById(`shot-card-${shotId}`);
+  if (card) {
+    card.scrollIntoView({ behavior: "smooth", block: "center" });
+    card.style.boxShadow = "0 0 0 2px var(--amber-gold)";
+    setTimeout(() => {
+      card.style.boxShadow = "";
+    }, 1400);
+  }
+}
+
+function setShotFilter(filterMode) {
+  currentState.shotFilter = filterMode;
+  document.querySelectorAll(".statChip[data-shot-filter]").forEach((chip) => {
+    chip.classList.toggle("activeFilter", chip.getAttribute("data-shot-filter") === filterMode);
+  });
+  if (currentState.workspace) {
+    renderShotCards(currentState.workspace.shots || []);
+  }
+}
+
+function onShotSearchInput(keyword) {
+  currentState.shotSearchKeyword = (keyword || "").trim().toLowerCase();
+  if (currentState.workspace) {
+    renderShotCards(currentState.workspace.shots || []);
+  }
+}
+
+function filterShotsList(shots) {
+  return shots.filter((s) => {
+    if (currentState.shotFilter === "action_fl2va" && s.shotCategory !== "action_fl2va") {
+      return false;
+    }
+    if (currentState.shotFilter === "dialogue_i2v" && s.shotCategory !== "dialogue_i2v") {
+      return false;
+    }
+    if (currentState.shotFilter === "locked" && Number(s.lockFromPrevEnd) !== 1) {
+      return false;
+    }
+    if (currentState.shotFilter === "completed" && !s.videoUrl) {
+      return false;
+    }
+    if (currentState.shotSearchKeyword) {
+      const kw = currentState.shotSearchKeyword;
+      const dlgText = (s.dialogue || []).map((d) => `${d.speaker || ""}:${d.text || ""}`).join(" ");
+      const haystack = `#${s.shotNumber} ${s.title || ""} ${s.intentText || ""} ${s.actionArcPrompt || ""} ${dlgText}`.toLowerCase();
+      if (!haystack.includes(kw)) {
+        return false;
+      }
+    }
+    return true;
+  });
+}
+
 function renderShotCards(shots) {
   document.getElementById("statTotalShots").textContent = shots.length;
   document.getElementById("statActionShots").textContent = shots.filter(
@@ -228,18 +451,32 @@ function renderShotCards(shots) {
   document.getElementById("statLockedShots").textContent = shots.filter(
     (s) => Number(s.lockFromPrevEnd) === 1
   ).length;
+  const completedCountEl = document.getElementById("statCompletedShots");
+  if (completedCountEl) {
+    completedCountEl.textContent = shots.filter((s) => Boolean(s.videoUrl)).length;
+  }
 
   const container = document.getElementById("shotListContainer");
   if (!shots.length) {
     container.innerHTML = `
       <div style="background:var(--bg-panel); border:1px dashed var(--border-subtle); border-radius:10px; padding:40px; text-align:center; color:var(--text-secondary);">
-        当前剧集尚无分镜。请点击上方 <strong>“📜 剧本拆解 / 重排分镜”</strong> 自动生成首尾帧分镜表。
+        当前剧集尚无分镜。请点击顶部 <strong>“📜 三阶剧本与调度账本”</strong> 自动生成首尾帧分镜表。
       </div>
     `;
     return;
   }
 
-  container.innerHTML = shots
+  const visibleShots = filterShotsList(shots);
+  if (!visibleShots.length) {
+    container.innerHTML = `
+      <div style="background:var(--bg-panel); border:1px dashed var(--border-subtle); border-radius:10px; padding:32px; text-align:center; color:var(--text-secondary);">
+        当前筛选或搜索条件下没有匹配的镜头。<button class="btn btnSmall" style="margin-left:8px;" onclick="setShotFilter('all')">重置筛选</button>
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = visibleShots
     .map((s) => {
       const isAction = s.shotCategory === "action_fl2va";
       const modeClass = isAction ? "actionMode" : "dialogueMode";
@@ -248,11 +485,11 @@ function renderShotCards(shots) {
         : "💬 台词博弈镜 (I2V 单首帧声学锁)";
 
       const firstImgHtml = s.firstFrameUrl
-        ? `<img src="${escapeHtml(s.firstFrameUrl)}" alt="首帧" />`
-        : `<div class="emptyViewportHint">尚未生成首帧 (0.0s 起点构图)<br/>点击下方按钮生成或从前镜尾帧锁定</div>`;
+        ? `<img src="${escapeHtml(s.firstFrameUrl)}" alt="首帧" onclick="openLightbox('${escapeHtml(s.firstFrameUrl)}', 'SHOT #${s.shotNumber} [首帧锚点 0.0s] · ${escapeHtml(s.title)}')" title="点击放大审阅首帧细节" />`
+        : `<div class="emptyViewportHint">尚未生成首帧 (0.0s 起点构图)<br/>点击右上角生成或从前镜尾帧锁定</div>`;
 
       const lastImgHtml = s.lastFrameUrl
-        ? `<img src="${escapeHtml(s.lastFrameUrl)}" alt="尾帧" />`
+        ? `<img src="${escapeHtml(s.lastFrameUrl)}" alt="尾帧" onclick="openLightbox('${escapeHtml(s.lastFrameUrl)}', 'SHOT #${s.shotNumber} [尾帧锚点 ${s.durationSec}s] · ${escapeHtml(s.title)}')" title="点击放大审阅尾帧落点" />`
         : `<div class="emptyViewportHint">${
             isAction
               ? "尚未生成尾帧 (动作结果锚点)<br/>锁定尾帧可100%防止情节演一半停住"
@@ -290,21 +527,21 @@ function renderShotCards(shots) {
           <div class="shotHeader">
             <div class="shotMetaLeft">
               <span class="shotNumBadge">SHOT #${s.shotNumber}</span>
-              <input class="shotTitleInput" value="${escapeHtml(s.title)}" onchange="saveShotField(${s.id}, {title: this.value})" />
+              <input class="shotTitleInput" aria-label="镜头标题" value="${escapeHtml(s.title)}" onchange="saveShotField(${s.id}, {title: this.value})" />
               <span class="modeBadge ${s.shotCategory}">${modeLabel}</span>
-              <select class="formSelect" style="padding:3px 8px; font-size:11.5px;" onchange="saveShotField(${s.id}, {shotCategory: this.value})">
+              <select class="formSelect" aria-label="镜头模式切换" style="padding:3px 8px; font-size:11.5px;" onchange="saveShotField(${s.id}, {shotCategory: this.value})">
                 <option value="action_fl2va" ${isAction ? "selected" : ""}>切换为：动作首尾帧镜 (FL2VA)</option>
                 <option value="dialogue_i2v" ${!isAction ? "selected" : ""}>切换为：台词单首帧镜 (I2V)</option>
               </select>
-              <select class="formSelect" style="padding:3px 8px; font-size:11.5px;" onchange="saveShotField(${s.id}, {videoEngine: this.value})">
+              <select class="formSelect" aria-label="视频生成引擎切换" style="padding:3px 8px; font-size:11.5px;" onchange="saveShotField(${s.id}, {videoEngine: this.value})">
                 <option value="h3_fl2va" ${s.videoEngine === "h3_fl2va" ? "selected" : ""}>引擎：MiniMax-H3 FL2VA (首尾帧音画)</option>
                 <option value="wan22_moe" ${s.videoEngine === "wan22_moe" ? "selected" : ""}>引擎：Wan 2.2 14B MoE (双专家高清)</option>
               </select>
               ${
                 s.shotNumber > 1
                   ? `<label class="frameLockLabel" title="开启后，本镜首帧直接无损复用上一镜的高清静态尾帧 (.png)，彻底解决前后断联与视频截帧模糊">
-                      <input type="checkbox" ${Number(s.lockFromPrevEnd) === 1 ? "checked" : ""} onchange="saveShotField(${s.id}, {lockFromPrevEnd: this.checked ? 1 : 0})" />
-                      🔒 帧锁：承接上镜尾帧
+                      <input type="checkbox" class="visually-hidden" ${Number(s.lockFromPrevEnd) === 1 ? "checked" : ""} onchange="saveShotField(${s.id}, {lockFromPrevEnd: this.checked ? 1 : 0})" />
+                      <span>🔒 帧锁：承接上镜尾帧</span>
                     </label>`
                   : ""
               }
@@ -326,7 +563,7 @@ function renderShotCards(shots) {
                 <button class="btn btnSmall" onclick="triggerKeyframes(${s.id}, 'first')">重绘首帧</button>
               </div>
               <div class="mediaViewport">${firstImgHtml}</div>
-              <textarea class="promptTextarea" placeholder="首帧静态构图提示词..." onchange="saveShotField(${s.id}, {firstFramePrompt: this.value})">${escapeHtml(s.firstFramePrompt)}</textarea>
+              <textarea class="promptTextarea" aria-label="首帧静态构图提示词" placeholder="首帧静态构图提示词..." onchange="saveShotField(${s.id}, {firstFramePrompt: this.value})">${escapeHtml(s.firstFramePrompt)}</textarea>
             </div>
 
             <!-- [2] 戏剧动作弧线与逐字台词轨 -->
@@ -338,11 +575,11 @@ function renderShotCards(shots) {
               <div class="intentBanner">🎯 叙事目的：${escapeHtml(s.intentText || "交代本镜核心情节变化")}</div>
               <div class="formGroup">
                 <label>中间物理运动轨迹 (Motion Progression Arc)：</label>
-                <textarea class="promptTextarea" style="min-height:54px;" onchange="saveShotField(${s.id}, {actionArcPrompt: this.value})">${escapeHtml(s.actionArcPrompt)}</textarea>
+                <textarea class="promptTextarea" aria-label="中间物理运动轨迹" style="min-height:54px;" onchange="saveShotField(${s.id}, {actionArcPrompt: this.value})">${escapeHtml(s.actionArcPrompt)}</textarea>
               </div>
               <div class="formGroup">
                 <label>空间轴线与机位运动 (${escapeHtml(s.cameraMovement)})：</label>
-                <input class="formInput" style="padding:5px 8px; font-size:11.5px;" value="${escapeHtml(s.axisRule)}" onchange="saveShotField(${s.id}, {axisRule: this.value})" />
+                <input class="formInput" aria-label="空间轴线与机位运动" style="padding:5px 8px; font-size:11.5px;" value="${escapeHtml(s.axisRule)}" onchange="saveShotField(${s.id}, {axisRule: this.value})" />
               </div>
               <div class="dialogueTrackBox">
                 <div style="font-size:11px; font-weight:700; color:var(--text-secondary);">🎙️ 声学与台词轨道 (画内口型 / 画外闭口硬约束)：</div>
@@ -357,7 +594,7 @@ function renderShotCards(shots) {
                 <button class="btn btnSmall" onclick="triggerKeyframes(${s.id}, 'last')">重绘尾帧</button>
               </div>
               <div class="mediaViewport">${lastImgHtml}</div>
-              <textarea class="promptTextarea" placeholder="尾帧动作完成态构图提示词..." onchange="saveShotField(${s.id}, {lastFramePrompt: this.value})">${escapeHtml(s.lastFramePrompt)}</textarea>
+              <textarea class="promptTextarea" aria-label="尾帧动作完成态构图提示词" placeholder="尾帧动作完成态构图提示词..." onchange="saveShotField(${s.id}, {lastFramePrompt: this.value})">${escapeHtml(s.lastFramePrompt)}</textarea>
             </div>
 
             <!-- [4] 镜头成片监视器 -->
@@ -437,6 +674,7 @@ async function pollRunningTasks() {
 async function refreshTasksOnly() {
   if (!currentState.activeProjectId) return;
   await loadWorkspace(currentState.activeProjectId, currentState.activeEpisodeId);
+  showToast("已刷新渲染队列与工作台状态", "info");
 }
 
 async function saveShotField(shotId, payload) {
@@ -445,9 +683,10 @@ async function saveShotField(shotId, payload) {
       method: "POST",
       body: JSON.stringify(payload),
     });
+    flashSaveIndicator("✓ 已自动保存");
     await loadWorkspace(currentState.activeProjectId, currentState.activeEpisodeId);
   } catch (err) {
-    alert(`保存镜头修改失败: ${err.message}`);
+    showToast(`保存镜头修改失败: ${err.message}`, "error");
   }
 }
 
@@ -457,9 +696,10 @@ async function triggerKeyframes(shotId, frameRole = "both") {
       method: "POST",
       body: JSON.stringify({ frameRole }),
     });
+    showToast(`已提交镜头 #${shotId} 关键帧生成任务`, "info");
     await loadWorkspace(currentState.activeProjectId, currentState.activeEpisodeId);
   } catch (err) {
-    alert(`提交关键帧生成失败: ${err.message}`);
+    showToast(`提交关键帧生成失败: ${err.message}`, "error");
   }
 }
 
@@ -469,9 +709,10 @@ async function triggerShotVideo(shotId) {
       method: "POST",
       body: JSON.stringify({}),
     });
+    showToast(`已提交镜头 #${shotId} 视频渲染任务`, "info");
     await loadWorkspace(currentState.activeProjectId, currentState.activeEpisodeId);
   } catch (err) {
-    alert(`提交镜头视频渲染失败: ${err.message}`);
+    showToast(`提交镜头视频渲染失败: ${err.message}`, "error");
   }
 }
 
@@ -481,9 +722,10 @@ async function extractLastFrameFromShot(shotId) {
       method: "POST",
       body: JSON.stringify({}),
     });
+    showToast(`已提取视频末尾帧并同步至下一镜首帧`, "success");
     await loadWorkspace(currentState.activeProjectId, currentState.activeEpisodeId);
   } catch (err) {
-    alert(`提取视频末尾帧失败: ${err.message}`);
+    showToast(`提取视频末尾帧失败: ${err.message}`, "error");
   }
 }
 
@@ -495,9 +737,9 @@ async function syncAllFrameLocks() {
       body: JSON.stringify({}),
     });
     await loadWorkspace(currentState.activeProjectId, currentState.activeEpisodeId);
-    alert(`已同步全集连续性帧锁（本次更新 ${res.syncedCount} 个镜头的首帧锚点）！`);
+    showToast(`已同步全集连续性帧锁（更新 ${res.syncedCount} 个镜头首帧锚点）`, "success");
   } catch (err) {
-    alert(`同步帧锁失败: ${err.message}`);
+    showToast(`同步帧锁失败: ${err.message}`, "error");
   }
 }
 
@@ -508,15 +750,17 @@ async function batchGenerateKeyframes(limit = 3) {
       method: "POST",
       body: JSON.stringify({ limit }),
     });
+    showToast(`已启动批量生成前 ${limit} 镜首尾关键帧`, "info");
     await loadWorkspace(currentState.activeProjectId, currentState.activeEpisodeId);
   } catch (err) {
-    alert(`批量生成关键帧失败: ${err.message}`);
+    showToast(`批量生成关键帧失败: ${err.message}`, "error");
   }
 }
 
 async function mergeMasterEpisode() {
   if (!currentState.activeEpisodeId) return;
   try {
+    showToast("正在标准化音画参数并合成整集无缝母带...", "info");
     const res = await apiFetch(`/api/episodes/${currentState.activeEpisodeId}/mergeMaster`, {
       method: "POST",
       body: JSON.stringify({}),
@@ -526,23 +770,9 @@ async function mergeMasterEpisode() {
     if (tlLink && res.timelineUrl) {
       tlLink.href = res.timelineUrl;
     }
+    showToast("整集无缝母带与剪映时间轴已合成完毕！", "success");
   } catch (err) {
-    alert(`合成整集母带提示: ${err.message}`);
-  }
-}
-
-async function importHuobaoData() {
-  try {
-    const res = await apiFetch("/api/import/huobao", {
-      method: "POST",
-      body: JSON.stringify({}),
-    });
-    await loadProjects();
-    alert(
-      `成功从本机历史库导入并升级为首尾帧结构：\n项目 ${res.summary.projects} 个，剧集 ${res.summary.episodes} 集，设定资产 ${res.summary.assets} 项，分镜 ${res.summary.shots} 条！`
-    );
-  } catch (err) {
-    alert(`导入失败: ${err.message}`);
+    showToast(`合成整集母带提示: ${err.message}`, "error");
   }
 }
 
@@ -551,12 +781,23 @@ function showCompiledPrompt(shotId) {
   const shot = (currentState.workspace.shots || []).find((s) => s.id === shotId);
   if (!shot) return;
   document.getElementById("compiledPromptPre").textContent = shot.compiledPreview || "";
-  document.getElementById("promptPreviewModal").classList.add("open");
+  openDialog("promptPreviewModal");
+}
+
+async function copyCompiledPrompt() {
+  const pre = document.getElementById("compiledPromptPre");
+  if (!pre || !pre.textContent) return;
+  try {
+    await navigator.clipboard.writeText(pre.textContent);
+    showToast("已复制底层编译指令到剪贴板", "success");
+  } catch (err) {
+    showToast("复制失败，请手动选中复制", "error");
+  }
 }
 
 function openScriptModal() {
   if (!currentState.workspace || !currentState.workspace.activeEpisode) {
-    alert("请先选择或创建一个短剧项目");
+    showToast("请先选择或创建一个短剧项目", "error");
     return;
   }
   const ep = currentState.workspace.activeEpisode;
@@ -566,14 +807,14 @@ function openScriptModal() {
     ep.sceneLedger && ep.sceneLedger.length
       ? `✅ 已建立 ${ep.sceneLedger.length} 场空间调度账本`
       : "尚未生成场次空间调度账本";
-  document.getElementById("scriptModal").classList.add("open");
+  openDialog("scriptModal");
 }
 
 async function submitNovelRewrite() {
   if (!currentState.activeEpisodeId) return;
   const novelText = document.getElementById("novelInputArea").value.trim();
   if (!novelText) {
-    alert("请先在左栏输入小说原文");
+    showToast("请先在左栏输入小说原文", "error");
     return;
   }
   const badge = document.getElementById("rewriteStatusBadge");
@@ -585,10 +826,11 @@ async function submitNovelRewrite() {
     });
     document.getElementById("scriptInputArea").value = res.formattedScript || "";
     badge.textContent = `✅ 已生成 ${res.sceneCount} 个场次账本，新增/补全 ${res.assetCountChanged} 项设定资产！`;
+    showToast(`已完成三阶分场改写并入库 ${res.assetCountChanged} 项资产`, "success");
     await loadWorkspace(currentState.activeProjectId, currentState.activeEpisodeId);
   } catch (err) {
     badge.textContent = "❌ 改写失败";
-    alert(`小说改写分场剧本失败: ${err.message}`);
+    showToast(`小说改写分场剧本失败: ${err.message}`, "error");
   }
 }
 
@@ -597,7 +839,7 @@ async function submitScriptBreakdown() {
   const novelText = document.getElementById("novelInputArea").value.trim();
   const scriptText = document.getElementById("scriptInputArea").value.trim();
   if (!novelText && !scriptText) {
-    alert("请输入小说原文或剧本内容");
+    showToast("请输入小说原文或剧本内容", "error");
     return;
   }
   try {
@@ -607,20 +849,20 @@ async function submitScriptBreakdown() {
     });
     closeModal("scriptModal");
     await loadWorkspace(currentState.activeProjectId, currentState.activeEpisodeId);
-    alert(`成功按 ${res.sceneCount || 1} 场空间调度账本生成 ${res.shotCount} 条首尾帧分镜！`);
+    showToast(`成功按 ${res.sceneCount || 1} 场空间调度账本生成 ${res.shotCount} 条首尾帧分镜！`, "success");
   } catch (err) {
-    alert(`剧本拆解失败: ${err.message}`);
+    showToast(`剧本拆解失败: ${err.message}`, "error");
   }
 }
 
 function openNewProjectModal() {
-  document.getElementById("newProjectModal").classList.add("open");
+  openDialog("newProjectModal");
 }
 
 async function submitNewProject() {
   const title = document.getElementById("newProjTitle").value.trim();
   if (!title) {
-    alert("请输入短剧名称");
+    showToast("请输入短剧名称", "error");
     return;
   }
   try {
@@ -635,9 +877,10 @@ async function submitNewProject() {
       }),
     });
     closeModal("newProjectModal");
+    showToast(`已创建短剧项目《${title}》`, "success");
     await loadProjects(res.projectId);
   } catch (err) {
-    alert(`创建项目失败: ${err.message}`);
+    showToast(`创建项目失败: ${err.message}`, "error");
   }
 }
 
@@ -648,7 +891,7 @@ function openSettingsModal() {
   document.getElementById("cfgLlmBaseUrl").value = s.llmBaseUrl || "https://api.deepseek.com/v1";
   document.getElementById("cfgLlmApiKey").value = s.llmApiKeyMasked || "";
   document.getElementById("cfgLlmModel").value = s.llmModel || "deepseek-chat";
-  document.getElementById("settingsModal").classList.add("open");
+  openDialog("settingsModal");
 }
 
 async function saveSettings() {
@@ -664,14 +907,11 @@ async function saveSettings() {
       }),
     });
     closeModal("settingsModal");
+    showToast("引擎配置已保存并重新检测连接", "success");
     await refreshStatus();
   } catch (err) {
-    alert(`保存设置失败: ${err.message}`);
+    showToast(`保存设置失败: ${err.message}`, "error");
   }
-}
-
-function closeModal(modalId) {
-  document.getElementById(modalId).classList.remove("open");
 }
 
 window.addEventListener("DOMContentLoaded", initApp);
