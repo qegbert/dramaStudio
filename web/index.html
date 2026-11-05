@@ -11,9 +11,9 @@
   <!-- 顶部影视场记板导航栏 -->
   <header class="topSlateBar">
     <div class="brandGroup">
-      <span class="brandBadge">FL2VA · KEYFRAME FIRST</span>
+      <span class="brandBadge">DRAMAFORGE</span>
       <span class="brandTitle">DramaForge Studio</span>
-      <span class="brandSubtitle">三阶剧本调度账本 · 首尾关键帧双锚点 · 零衰减帧锁管线</span>
+      <span class="brandSubtitle">4 步傻瓜式 AI 短剧创作台 · 首尾画面锁死动作 · 前后镜头无缝接力</span>
     </div>
     <div class="topStatusActions">
       <span id="saveIndicator" class="saveIndicator">✓ 已自动保存</span>
@@ -21,7 +21,6 @@
         <span class="statusDot" id="comfyStatusDot"></span>
         <span id="comfyStatusText">正在检测无影云端...</span>
       </div>
-      <button class="btn btnCyan" onclick="openScriptModal()">📜 三阶剧本与调度账本</button>
       <button class="btn" onclick="openNewProjectModal()">➕ 新建短剧</button>
       <button class="btn" onclick="openSettingsModal()">⚙️ 引擎设置</button>
     </div>
@@ -29,25 +28,25 @@
 
   <!-- 主工作区三栏布局 -->
   <main class="studioWorkspace">
-    <!-- 左侧栏：项目、剧集与防串台资产库 -->
+    <!-- 左侧栏：项目、剧集与设定资产库 -->
     <aside class="leftSidebar">
       <div>
         <div class="sectionHeader">
-          <span class="sectionTitle">🎬 当前短剧项目</span>
+          <span class="sectionTitle">🎬 1. 选择短剧项目</span>
         </div>
         <select id="projectSelect" class="projectSelect" aria-label="选择短剧项目" onchange="onProjectChange(this.value)"></select>
       </div>
 
       <div>
         <div class="sectionHeader">
-          <span class="sectionTitle">🎞️ 剧集选择</span>
+          <span class="sectionTitle">🎞️ 2. 选择当前剧集</span>
         </div>
         <select id="episodeSelect" class="projectSelect" aria-label="选择剧集" onchange="onEpisodeChange(this.value)"></select>
       </div>
 
       <div style="flex:1; display:flex; flex-direction:column; min-height:0;">
         <div class="sectionHeader">
-          <span class="sectionTitle">🎭 设定资产库 (时空隔离)</span>
+          <span class="sectionTitle">🎭 本剧角色 / 场景 / 道具库</span>
           <span id="assetCountLabel" style="font-size:11px; color:var(--text-muted);">0 项</span>
         </div>
         <div class="assetFilterTabs" role="tablist">
@@ -60,107 +59,155 @@
       </div>
     </aside>
 
-    <!-- 中央：四联导演监视器分镜工作台 -->
+    <!-- 中央：4 步向导式分镜工作台 -->
     <section class="centerStage" id="centerStageScroller">
-      <div class="stageToolbar">
-        <div class="toolbarStats">
-          <span class="statChip activeFilter" data-shot-filter="all" onclick="setShotFilter('all')" title="点击查看全部镜头">
-            全部镜头 <strong id="statTotalShots">0</strong>
-          </span>
-          <span class="statChip" data-shot-filter="action_fl2va" onclick="setShotFilter('action_fl2va')" title="点击筛选动作推进首尾帧镜">
-            ⚡ 动作镜 (FL2VA) <strong id="statActionShots" style="color:var(--amber-gold);">0</strong>
-          </span>
-          <span class="statChip" data-shot-filter="dialogue_i2v" onclick="setShotFilter('dialogue_i2v')" title="点击筛选台词博弈单首帧镜">
-            💬 台词镜 (I2V) <strong id="statDialogueShots" style="color:var(--cyan-monitor);">0</strong>
-          </span>
-          <span class="statChip" data-shot-filter="locked" onclick="setShotFilter('locked')" title="点击筛选已开启帧锁接力的镜头">
-            🔒 帧锁接力 <strong id="statLockedShots" style="color:var(--emerald-ok);">0</strong>
-          </span>
-          <span class="statChip" data-shot-filter="completed" onclick="setShotFilter('completed')" title="点击筛选已生成视频的镜头">
-            ✅ 已出成片 <strong id="statCompletedShots" style="color:var(--emerald-ok);">0</strong>
-          </span>
-          <input
-            id="shotSearchInput"
-            type="search"
-            class="searchShotInput"
-            placeholder="🔍 搜索镜号 / 标题 / 台词..."
-            oninput="onShotSearchInput(this.value)"
-          />
+      <!-- 顶部 4 步短剧制作流水线导航栏 (Workflow Stepper) -->
+      <nav class="workflowStepper" aria-label="短剧制作四步向导">
+        <!-- 步骤 1 -->
+        <div class="stepCard" id="stepCard1">
+          <div class="stepHeaderRow">
+            <span class="stepNumberBadge">第 ① 步</span>
+            <span class="stepProgressText" id="step1StatText">0 个镜头</span>
+          </div>
+          <div class="stepTitleText">写剧本 & 拆解分镜</div>
+          <div class="stepDescText">粘贴小说原文，AI 自动提取角色场景并拆成逐镜故事板</div>
+          <button class="btn btnCyan btnSmall" style="width:100%;" onclick="openScriptModal()">
+            📜 打开剧本与分镜拆解
+          </button>
         </div>
-        <div style="display:flex; gap:8px; flex-wrap:wrap;">
-          <button class="btn btnEmerald" onclick="syncAllFrameLocks()">🔗 同步全集帧锁</button>
-          <button class="btn btnCyan" onclick="batchGenerateKeyframes(3)">🎨 批量生成前 3 镜关键帧</button>
-          <button class="btn btnPrimary" onclick="mergeMasterEpisode()">🎞️ 合成整集母带 & 剪映时间轴</button>
+
+        <!-- 步骤 2 -->
+        <div class="stepCard" id="stepCard2">
+          <div class="stepHeaderRow">
+            <span class="stepNumberBadge">第 ② 步</span>
+            <span class="stepProgressText" id="step2StatText">0 / 0 已就绪</span>
+          </div>
+          <div class="stepTitleText">生成各镜首尾画面</div>
+          <div class="stepDescText">先画好每一镜的起点图与结果图，锁死人物长相和动作</div>
+          <button class="btn btnCyan btnSmall" style="width:100%;" onclick="batchGenerateKeyframes(50)">
+            🎨 一键补齐本集缺失画面
+          </button>
         </div>
-      </div>
 
-      <!-- 交互式横向胶片时间轴导轨 (Filmstrip Storyboard Ribbon) -->
-      <div id="filmstripRibbon" class="filmstripRibbon" aria-label="分镜胶片时间轴快速导航"></div>
+        <!-- 步骤 3 -->
+        <div class="stepCard" id="stepCard3">
+          <div class="stepHeaderRow">
+            <span class="stepNumberBadge">第 ③ 步</span>
+            <span class="stepProgressText" id="step3StatText">0 / 0 已出片</span>
+          </div>
+          <div class="stepTitleText">排队生成全集视频</div>
+          <div class="stepDescText">后台按顺序一镜一镜自动排队渲染视频，无需手动逐个点</div>
+          <button class="btn btnPrimary btnSmall" style="width:100%;" onclick="batchGenerateAllVideos()">
+            🎬 一键排队生成未完成视频
+          </button>
+        </div>
 
-      <!-- 母带成片预览条 -->
+        <!-- 步骤 4 -->
+        <div class="stepCard" id="stepCard4">
+          <div class="stepHeaderRow">
+            <span class="stepNumberBadge">第 ④ 步</span>
+            <span class="stepProgressText" id="step4StatText">待合成</span>
+          </div>
+          <div class="stepTitleText">合成整集完整短剧</div>
+          <div class="stepDescText">将本集所有镜头无缝拼接为一部完整 MP4 成片并导出</div>
+          <button class="btn btnEmerald btnSmall" style="width:100%;" onclick="mergeMasterEpisode()">
+            🎞️ 合成整集 MP4 成片
+          </button>
+        </div>
+      </nav>
+
+      <!-- 母带成片置顶播放器 -->
       <div id="masterBanner" class="masterBanner" style="display:none;">
         <div>
-          <div style="font-size:14px; font-weight:700; color:var(--emerald-ok); margin-bottom:4px;">
-            ✅ 整集无缝母带已合成就绪
+          <div style="font-size:15px; font-weight:700; color:var(--emerald-ok); margin-bottom:4px;">
+            🎉 整集完整短剧成片已合成就绪！
           </div>
-          <div id="masterMetaText" style="font-size:12px; color:var(--text-secondary);"></div>
-          <div style="margin-top:8px; display:flex; gap:8px;">
-            <a id="masterDownloadLink" class="btn btnSmall btnEmerald" href="#" download>⬇️ 下载母带 MP4</a>
-            <a id="timelineDownloadLink" class="btn btnSmall" href="#" target="_blank">📋 查看剪映时间轴 JSON</a>
+          <div id="masterMetaText" style="font-size:12.5px; color:var(--text-secondary);"></div>
+          <div style="margin-top:10px; display:flex; gap:8px;">
+            <a id="masterDownloadLink" class="btn btnSmall btnEmerald" href="#" download>⬇️ 下载完整短剧 MP4</a>
+            <a id="timelineDownloadLink" class="btn btnSmall" href="#" target="_blank">📋 导出剪映时间轴 JSON</a>
           </div>
         </div>
         <video id="masterVideoPlayer" class="masterVideoPlayer" controls preload="metadata"></video>
       </div>
 
-      <!-- 场次空间调度与状态账本面板 (Scene Blocking & State Ledger) -->
-      <div id="sceneLedgerPanel" class="sceneLedgerSection" style="display:none;">
-        <div class="sectionHeader" style="margin-bottom:0;">
-          <span class="sectionTitle" style="color:var(--cyan-monitor);">
-            🧭 场次空间调度与状态账本 (Scene Blocking & State Ledger) —— 锁定 180° 轴线、时空角色池与道具流转
+      <!-- 筛选胶囊与快速搜索条 -->
+      <div class="stageSubToolbar">
+        <div class="toolbarStats">
+          <span class="statChip activeFilter" data-shot-filter="all" onclick="setShotFilter('all')">
+            全部镜头 <strong id="statTotalShots">0</strong>
           </span>
-          <div style="display:flex; gap:6px;">
-            <button class="btn btnSmall" onclick="toggleSceneLedgerCollapse()" id="toggleLedgerBtn">收起账本</button>
-            <button class="btn btnSmall btnCyan" onclick="openScriptModal()">编辑分场剧本与账本</button>
-          </div>
+          <span class="statChip" data-shot-filter="action_fl2va" onclick="setShotFilter('action_fl2va')">
+            ⚡ 动作镜 <strong id="statActionShots" style="color:var(--amber-gold);">0</strong>
+          </span>
+          <span class="statChip" data-shot-filter="dialogue_i2v" onclick="setShotFilter('dialogue_i2v')">
+            💬 台词镜 <strong id="statDialogueShots" style="color:var(--cyan-monitor);">0</strong>
+          </span>
+          <span class="statChip" data-shot-filter="locked" onclick="setShotFilter('locked')">
+            🔒 承接上镜画面 <strong id="statLockedShots" style="color:var(--emerald-ok);">0</strong>
+          </span>
+          <span class="statChip" data-shot-filter="completed" onclick="setShotFilter('completed')">
+            ✅ 已出视频 <strong id="statCompletedShots" style="color:var(--emerald-ok);">0</strong>
+          </span>
+          <input
+            id="shotSearchInput"
+            type="search"
+            class="searchShotInput"
+            placeholder="🔍 搜索第几镜 / 标题 / 台词..."
+            oninput="onShotSearchInput(this.value)"
+          />
         </div>
-        <div id="sceneLedgerGrid" class="sceneLedgerGrid"></div>
+        <div style="display:flex; gap:8px;">
+          <button class="btn btnSmall" onclick="syncAllFrameLocks()" title="让所有开启了「承接上镜」的镜头自动复用上一镜的结尾画面">
+            🔗 同步前后镜头衔接画面
+          </button>
+        </div>
       </div>
+
+      <!-- 交互式横向胶片时间轴导轨 (点击快速跳转到任意一镜) -->
+      <div id="filmstripRibbon" class="filmstripRibbon" aria-label="分镜胶片时间轴快速导航"></div>
+
+      <!-- 场次空间调度账本（默认收起在原生 <details> 中，按需展开查看） -->
+      <details id="sceneLedgerPanel" class="sceneLedgerSection" style="display:none;">
+        <summary>
+          <span style="font-size:12.5px; font-weight:700; color:var(--cyan-monitor);">
+            🧭 查看本集分场调度账本（各场次出场角色、左右站位方向与道具变化）
+          </span>
+          <span style="font-size:11.5px; color:var(--text-secondary);">点击展开 / 收起 ▾</span>
+        </summary>
+        <div id="sceneLedgerGrid" class="sceneLedgerGrid"></div>
+      </details>
 
       <!-- 镜头列表容器 -->
       <div id="shotListContainer" class="shotListContainer"></div>
     </section>
 
-    <!-- 右侧栏：架构说明与实时渲染队列 -->
+    <!-- 右侧栏：实时任务进度与操作指南 -->
     <aside class="rightSidebar">
-      <div>
-        <div class="sectionHeader">
-          <span class="sectionTitle">🛡️ 核心管线优势</span>
-        </div>
-        <div style="background:var(--bg-card); border:1px solid var(--border-subtle); border-radius:8px; padding:12px; font-size:12px; color:var(--text-secondary); display:flex; flex-direction:column; gap:8px;">
-          <div><strong style="color:var(--amber-gold);">1. 双关键帧锁死完整情节 (FL2VA)</strong><br/>动作镜先生成“0.0s 起点首帧”与“完成态尾帧”，送入 <code>MiniMaxH3ImageToVideo</code> 锁定潜空间两端，杜绝动作演一半停住。</div>
-          <div><strong style="color:var(--emerald-ok);">2. 零画质衰减帧锁 (Frame Lock)</strong><br/>连续镜头直接无损复用上一镜的高清静态尾帧 <code>.png</code> 作为本镜首帧，告别视频截帧带来的代际模糊与空间越轴。</div>
-          <div><strong style="color:var(--cyan-monitor);">3. 动作与台词镜头解耦</strong><br/>大动作镜不塞长篇大论，长台词镜保持克制表演并严格区分画内口型与画外内心独白闭口约束。</div>
-        </div>
-      </div>
-
       <div style="flex:1; display:flex; flex-direction:column; min-height:0;">
         <div class="sectionHeader">
-          <span class="sectionTitle">⚡ 渲染队列与 Auto-QC 审计</span>
-          <button class="btn btnSmall" onclick="refreshTasksOnly()">刷新</button>
+          <span class="sectionTitle">⚡ 实时生成任务队列</span>
+          <div style="display:flex; gap:4px;">
+            <button class="btn btnSmall btnCyan" onclick="batchGenerateAllVideos()" title="把所有失败或未生成的镜头重新加入队列">🔄 重试未完成</button>
+            <button class="btn btnSmall" onclick="clearFailedTasks()" title="清空列表中红色的失败记录">🧹 清理失败</button>
+          </div>
         </div>
-        <div id="taskListContainer" class="assetList"></div>
+        <div style="font-size:11.5px; color:var(--text-muted); margin-bottom:8px;">
+          💡 点击下方任意任务卡片，可直接定位到对应的镜头。后台会自动排队一镜接一镜生成。
+        </div>
+        <div id="taskListContainer" class="assetList" role="status" aria-live="polite"></div>
       </div>
     </aside>
   </main>
 
-  <!-- 原生 <dialog> 1：三阶剧本改写与首尾帧分镜工作台 -->
+  <!-- 原生 <dialog> 1：剧本改写与分镜拆解工作台 -->
   <dialog id="scriptModal" class="studioDialog wideDialog" closedby="any" aria-labelledby="scriptDialogTitle">
     <div class="dialogInner">
       <div class="sectionHeader">
         <div>
-          <span id="scriptDialogTitle" style="font-size:15px; font-weight:700;">📜 三阶影视剧本改写 & 场次空间调度工作台</span>
+          <span id="scriptDialogTitle" style="font-size:15px; font-weight:700;">📜 第 ① 步：剧本改写 & 自动拆解分镜</span>
           <span style="font-size:12px; color:var(--text-secondary); margin-left:10px;">
-            阶段 1：小说心理外化 + 建立 180° 轴线/道具账本 + 自动补全资产 → 阶段 2：编译首尾关键帧分镜表
+            先把小说改成标准分场剧本并提取角色场景，再一键生成每一镜的分镜表
           </span>
         </div>
         <button class="btn btnSmall" onclick="closeModal('scriptModal')">✕</button>
@@ -168,26 +215,26 @@
       <div class="scriptCompareGrid">
         <div class="formGroup">
           <div style="display:flex; justify-content:space-between; align-items:center;">
-            <label for="novelInputArea">📖 1. 小说原文 (Novel Source)</label>
-            <button class="btn btnSmall btnCyan" onclick="submitNovelRewrite()">✨ 步骤 1：小说 → 分场账本 & 自动提取资产</button>
+            <label for="novelInputArea">📖 1. 粘贴小说原文或故事大纲</label>
+            <button class="btn btnSmall btnCyan" onclick="submitNovelRewrite()">✨ 第一步：小说 → 改写剧本 & 提取角色场景</button>
           </div>
-          <textarea id="novelInputArea" class="promptTextarea" style="min-height:350px; font-size:12.5px;" placeholder="粘贴小说章节原文..."></textarea>
+          <textarea id="novelInputArea" class="promptTextarea" style="min-height:350px; font-size:12.5px;" placeholder="在这里粘贴本集小说原文..."></textarea>
         </div>
         <div class="formGroup">
           <div style="display:flex; justify-content:space-between; align-items:center;">
-            <label for="scriptInputArea">🎬 2. 影视化分场剧本与空间调度账本 (Scene Blocking & Script)</label>
+            <label for="scriptInputArea">🎬 2. 改写后的分场影视剧本（可手动微调）</label>
             <span id="rewriteStatusBadge" style="font-size:11px; color:var(--emerald-ok);"></span>
           </div>
-          <textarea id="scriptInputArea" class="promptTextarea" style="min-height:350px; font-size:12.5px; font-family:var(--font-mono);" placeholder="点击左侧“步骤 1”自动生成包含 180° 空间轴线、时空角色锁、道具状态流转与精炼对白的工业级分场剧本..."></textarea>
+          <textarea id="scriptInputArea" class="promptTextarea" style="min-height:350px; font-size:12.5px; font-family:var(--font-mono);" placeholder="点击左上方「第一步」自动生成标准分场剧本，或直接在此编写剧本..."></textarea>
         </div>
       </div>
       <div style="display:flex; justify-content:space-between; align-items:center; padding-top:8px; border-top:1px solid var(--border-subtle);">
         <span style="font-size:12px; color:var(--text-secondary);">
-          💡 提示：步骤 1 会自动识别新角色（区分不同时期）、新场景、关键道具并合并入左侧资产库；步骤 2 将严格按分场账本生成首尾帧分镜。
+          💡 提示：直接点击右下角「第二步：生成分镜表」即可自动完成拆解并在主界面展示每一镜卡片。
         </span>
         <div style="display:flex; gap:10px;">
           <button class="btn" onclick="closeModal('scriptModal')">关闭 (Esc)</button>
-          <button class="btn btnPrimary" onclick="submitScriptBreakdown()">🚀 步骤 2：按分场账本生成首尾帧分镜表</button>
+          <button class="btn btnPrimary" onclick="submitScriptBreakdown()">🚀 第二步：按剧本生成全集分镜表</button>
         </div>
       </div>
     </div>
@@ -197,7 +244,7 @@
   <dialog id="newProjectModal" class="studioDialog" closedby="any" aria-labelledby="newProjDialogTitle">
     <div class="dialogInner">
       <div class="sectionHeader">
-        <span id="newProjDialogTitle" style="font-size:15px; font-weight:700;">➕ 新建自主版权短剧项目</span>
+        <span id="newProjDialogTitle" style="font-size:15px; font-weight:700;">➕ 新建短剧项目</span>
         <button class="btn btnSmall" onclick="closeModal('newProjectModal')">✕</button>
       </div>
       <div class="formGroup">
@@ -209,11 +256,11 @@
         <input id="newProjGenre" class="formInput" value="古风/修仙/硬核逆袭" />
       </div>
       <div class="formGroup">
-        <label for="newProjStyle">全局视觉风格锚点 (Visual Style)</label>
+        <label for="newProjStyle">画面视觉风格</label>
         <input id="newProjStyle" class="formInput" value="3D国漫电影级写实质感 (High-end Chinese 3D CG & live-action realism)" />
       </div>
       <div class="formGroup">
-        <label for="newProjRatio">画面比例 (Aspect Ratio)</label>
+        <label for="newProjRatio">画面比例</label>
         <select id="newProjRatio" class="formSelect">
           <option value="16:9">16:9 横屏电影级 (1344x768)</option>
           <option value="9:16">9:16 竖屏短剧级 (768x1344)</option>
@@ -238,11 +285,11 @@
         <button class="btn btnSmall" onclick="closeModal('settingsModal')">✕</button>
       </div>
       <div class="formGroup">
-        <label for="cfgComfyEndpoint">无影云端 / 本地 ComfyUI 地址 (如 RTX 5880 Ada 48GB)</label>
+        <label for="cfgComfyEndpoint">无影云端 / 本地 ComfyUI 地址</label>
         <input id="cfgComfyEndpoint" class="formInput" placeholder="http://127.0.0.1:8188" />
       </div>
       <div class="formGroup">
-        <label for="cfgH3Steps">H3 采样步数 (默认 20 步原生高质量采样)</label>
+        <label for="cfgH3Steps">视频采样步数 (默认 20 步)</label>
         <input id="cfgH3Steps" type="number" class="formInput" value="20" />
       </div>
       <div class="formGroup">
@@ -268,7 +315,7 @@
   <dialog id="promptPreviewModal" class="studioDialog" closedby="any" aria-labelledby="promptPreviewTitle">
     <div class="dialogInner">
       <div class="sectionHeader">
-        <span id="promptPreviewTitle" style="font-size:15px; font-weight:700;">🔍 底层视频模型原生编译指令预览</span>
+        <span id="promptPreviewTitle" style="font-size:15px; font-weight:700;">🔍 底层视频模型最终编译指令预览</span>
         <div style="display:flex; gap:8px;">
           <button class="btn btnSmall btnCyan" onclick="copyCompiledPrompt()">📋 复制指令</button>
           <button class="btn btnSmall" onclick="closeModal('promptPreviewModal')">✕</button>

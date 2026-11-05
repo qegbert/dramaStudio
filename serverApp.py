@@ -200,7 +200,13 @@ class StudioRequestHandler(BaseHTTPRequestHandler):
                     tasks = [
                         dict(t)
                         for t in conn.execute(
-                            "SELECT * FROM renderTasks WHERE projectId=? ORDER BY createdAt DESC LIMIT 30",
+                            """
+                            SELECT r.*, s.shotNumber, s.title AS shotTitle
+                            FROM renderTasks r
+                            LEFT JOIN shots s ON r.shotId = s.id
+                            WHERE r.projectId=?
+                            ORDER BY r.createdAt DESC LIMIT 30
+                            """,
                             (projectId,),
                         )
                     ]
@@ -217,7 +223,17 @@ class StudioRequestHandler(BaseHTTPRequestHandler):
 
             if path == "/api/tasks":
                 with closing(getDbConnection()) as conn:
-                    tasks = [dict(t) for t in conn.execute("SELECT * FROM renderTasks ORDER BY createdAt DESC LIMIT 40")]
+                    tasks = [
+                        dict(t)
+                        for t in conn.execute(
+                            """
+                            SELECT r.*, s.shotNumber, s.title AS shotTitle
+                            FROM renderTasks r
+                            LEFT JOIN shots s ON r.shotId = s.id
+                            ORDER BY r.createdAt DESC LIMIT 40
+                            """
+                        )
+                    ]
                 return self.sendJson({"ok": True, "tasks": tasks})
 
             # 静态媒体文件
@@ -480,14 +496,59 @@ class StudioRequestHandler(BaseHTTPRequestHandler):
             mBatchKf = re.match(r"^/api/episodes/(\d+)/batchKeyframes$", path)
             if mBatchKf:
                 episodeId = int(mBatchKf.group(1))
-                limitCount = int(body.get("limit") or 5)
+                limitCount = int(body.get("limit") or 50)
+                onlyMissing = bool(body.get("onlyMissing", True))
                 with closing(getDbConnection()) as conn:
-                    rows = conn.execute(
-                        "SELECT id FROM shots WHERE episodeId=? ORDER BY shotNumber ASC LIMIT ?",
-                        (episodeId, limitCount),
-                    ).fetchall()
+                    if onlyMissing:
+                        rows = conn.execute(
+                            """
+                            SELECT id FROM shots
+                            WHERE episodeId=? AND (firstFrameUrl IS NULL OR firstFrameUrl='' OR (shotCategory='action_fl2va' AND (lastFrameUrl IS NULL OR lastFrameUrl='')))
+                            ORDER BY shotNumber ASC LIMIT ?
+                            """,
+                            (episodeId, limitCount),
+                        ).fetchall()
+                    else:
+                        rows = conn.execute(
+                            "SELECT id FROM shots WHERE episodeId=? ORDER BY shotNumber ASC LIMIT ?",
+                            (episodeId, limitCount),
+                        ).fetchall()
                 taskIds = [enqueueKeyframeTask(r["id"], frameRole="both") for r in rows]
-                return self.sendJson({"ok": True, "taskIds": taskIds})
+                return self.sendJson({"ok": True, "taskIds": taskIds, "count": len(taskIds)})
+
+            mBatchVid = re.match(r"^/api/episodes/(\d+)/batchVideos$", path)
+            if mBatchVid:
+                episodeId = int(mBatchVid.group(1))
+                onlyPending = bool(body.get("onlyPending", True))
+                with closing(getDbConnection()) as conn:
+                    if onlyPending:
+                        rows = conn.execute(
+                            """
+                            SELECT id FROM shots
+                            WHERE episodeId=? AND (videoUrl IS NULL OR videoUrl='' OR status='failed')
+                            ORDER BY shotNumber ASC
+                            """,
+                            (episodeId,),
+                        ).fetchall()
+                    else:
+                        rows = conn.execute(
+                            "SELECT id FROM shots WHERE episodeId=? ORDER BY shotNumber ASC",
+                            (episodeId,),
+                        ).fetchall()
+                taskIds = [enqueueShotVideoTask(r["id"]) for r in rows]
+                return self.sendJson({"ok": True, "taskIds": taskIds, "count": len(taskIds)})
+
+            mClearFailed = re.match(r"^/api/projects/(\d+)/clearFailedTasks$", path)
+            if mClearFailed:
+                projectId = int(mClearFailed.group(1))
+                with closing(getDbConnection()) as conn:
+                    conn.execute("DELETE FROM renderTasks WHERE projectId=? AND status='failed'", (projectId,))
+                    conn.execute(
+                        "UPDATE shots SET status=CASE WHEN videoUrl!='' THEN 'completed' WHEN firstFrameUrl!='' THEN 'keyframes_ready' ELSE 'planned' END WHERE projectId=? AND status='failed'",
+                        (projectId,),
+                    )
+                    conn.commit()
+                return self.sendJson({"ok": True})
 
             mMerge = re.match(r"^/api/episodes/(\d+)/mergeMaster$", path)
             if mMerge:
