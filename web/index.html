@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DramaForge Studio — 自主版权 AI 短剧工业化工作台</title>
+  <link rel="stylesheet" href="/studioStyle.css" />
+</head>
+<body>
+  <!-- 顶部影视场记板导航栏 -->
+  <header class="topSlateBar">
+    <div class="brandGroup">
+      <span class="brandBadge">FL2VA · KEYFRAME FIRST</span>
+      <span class="brandTitle">DramaForge Studio</span>
+      <span class="brandSubtitle">100% 自主版权 · 首尾关键帧锚定 · 零衰减连续性短剧工业管线</span>
+    </div>
+    <div class="topStatusActions">
+      <div class="cloudPill" id="comfyStatusPill" title="点击打开引擎配置">
+        <span class="statusDot" id="comfyStatusDot"></span>
+        <span id="comfyStatusText">正在检测无影云端...</span>
+      </div>
+      <button class="btn btnCyan" onclick="openScriptModal()">📜 剧本拆解 / 重排分镜</button>
+      <button class="btn" onclick="importHuobaoData()">📥 从历史库导入剧目</button>
+      <button class="btn" onclick="openNewProjectModal()">➕ 新建短剧项目</button>
+      <button class="btn" onclick="openSettingsModal()">⚙️ 引擎设置</button>
+    </div>
+  </header>
+
+  <!-- 主工作区三栏布局 -->
+  <main class="studioWorkspace">
+    <!-- 左侧栏：项目、剧集与防串台资产库 -->
+    <aside class="leftSidebar">
+      <div>
+        <div class="sectionHeader">
+          <span class="sectionTitle">🎬 当前短剧项目</span>
+        </div>
+        <select id="projectSelect" class="projectSelect" onchange="onProjectChange(this.value)"></select>
+      </div>
+
+      <div>
+        <div class="sectionHeader">
+          <span class="sectionTitle">🎞️ 剧集选择</span>
+        </div>
+        <select id="episodeSelect" class="projectSelect" onchange="onEpisodeChange(this.value)"></select>
+      </div>
+
+      <div style="flex:1; display:flex; flex-direction:column; min-height:0;">
+        <div class="sectionHeader">
+          <span class="sectionTitle">🎭 设定资产库 (前世/今生隔离)</span>
+          <span id="assetCountLabel" style="font-size:11px; color:var(--text-muted);">0 项</span>
+        </div>
+        <div class="assetFilterTabs">
+          <div class="filterTab active" data-type="all" onclick="setAssetFilter('all')">全部</div>
+          <div class="filterTab" data-type="character" onclick="setAssetFilter('character')">角色</div>
+          <div class="filterTab" data-type="scene" onclick="setAssetFilter('scene')">场景</div>
+          <div class="filterTab" data-type="prop" onclick="setAssetFilter('prop')">道具</div>
+        </div>
+        <div id="assetList" class="assetList"></div>
+      </div>
+    </aside>
+
+    <!-- 中央：四联导演监视器分镜工作台 -->
+    <section class="centerStage">
+      <div class="stageToolbar">
+        <div class="toolbarStats">
+          <span class="statChip">总镜头: <strong id="statTotalShots">0</strong></span>
+          <span class="statChip">动作首尾帧镜 (FL2VA): <strong id="statActionShots" style="color:var(--amber-gold);">0</strong></span>
+          <span class="statChip">台词博弈镜 (I2V): <strong id="statDialogueShots" style="color:var(--cyan-monitor);">0</strong></span>
+          <span class="statChip">帧锁接力 (Frame Lock): <strong id="statLockedShots" style="color:var(--emerald-ok);">0</strong></span>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button class="btn btnEmerald" onclick="syncAllFrameLocks()">🔗 一键同步全集“尾帧→首帧”帧锁</button>
+          <button class="btn btnCyan" onclick="batchGenerateKeyframes(3)">🎨 批量生成前 3 镜首尾帧</button>
+          <button class="btn btnPrimary" onclick="mergeMasterEpisode()">🎞️ 合成整集母带 MP4 & 剪映时间轴</button>
+        </div>
+      </div>
+
+      <!-- 母带成片预览条 -->
+      <div id="masterBanner" class="masterBanner" style="display:none;">
+        <div>
+          <div style="font-size:14px; font-weight:700; color:var(--emerald-ok); margin-bottom:4px;">
+            ✅ 整集无缝母带已合成就绪
+          </div>
+          <div id="masterMetaText" style="font-size:12px; color:var(--text-secondary);"></div>
+          <div style="margin-top:8px; display:flex; gap:8px;">
+            <a id="masterDownloadLink" class="btn btnSmall btnEmerald" href="#" download>⬇️ 下载母带 MP4</a>
+            <a id="timelineDownloadLink" class="btn btnSmall" href="#" target="_blank">📋 查看剪映时间轴 JSON</a>
+          </div>
+        </div>
+        <video id="masterVideoPlayer" class="masterVideoPlayer" controls preload="metadata"></video>
+      </div>
+
+      <!-- 场次空间调度与状态账本面板 (Scene Blocking & State Ledger) -->
+      <div id="sceneLedgerPanel" class="sceneLedgerSection" style="display:none;">
+        <div class="sectionHeader" style="margin-bottom:0;">
+          <span class="sectionTitle" style="color:var(--cyan-monitor);">🧭 场次空间调度与状态账本 (Scene Blocking & State Ledger) —— 锁定 180° 轴线、前世今生角色池与道具流转</span>
+          <button class="btn btnSmall" onclick="openScriptModal()">编辑分场剧本与调度账本</button>
+        </div>
+        <div id="sceneLedgerGrid" class="sceneLedgerGrid"></div>
+      </div>
+
+      <!-- 镜头列表容器 -->
+      <div id="shotListContainer" class="shotListContainer"></div>
+    </section>
+
+    <!-- 右侧栏：架构说明与实时渲染队列 -->
+    <aside class="rightSidebar">
+      <div>
+        <div class="sectionHeader">
+          <span class="sectionTitle">🛡️ 为什么此管线能解决画质与断联？</span>
+        </div>
+        <div style="background:var(--bg-card); border:1px solid var(--border-subtle); border-radius:8px; padding:12px; font-size:12px; color:var(--text-secondary); display:flex; flex-direction:column; gap:8px;">
+          <div><strong style="color:var(--amber-gold);">1. 双关键帧锁死完整情节 (FL2VA)</strong><br/>动作镜先生成“0.0s 起点首帧”与“完成态尾帧”，送入 <code>MiniMaxH3ImageToVideo</code> 锁定潜空间两端，杜绝动作演一半停住。</div>
+          <div><strong style="color:var(--emerald-ok);">2. 零画质衰减帧锁 (Frame Lock)</strong><br/>连续镜头直接无损复用上一镜的高清静态尾帧 <code>.png</code> 作为本镜首帧，告别视频截帧带来的代际模糊与空间越轴。</div>
+          <div><strong style="color:var(--cyan-monitor);">3. 动作与台词镜头解耦</strong><br/>大动作镜不塞长篇大论，长台词镜保持克制表演并严格区分画内口型与画外内心独白闭口约束。</div>
+        </div>
+      </div>
+
+      <div style="flex:1; display:flex; flex-direction:column; min-height:0;">
+        <div class="sectionHeader">
+          <span class="sectionTitle">⚡ 渲染队列与 Auto-QC 审计</span>
+          <button class="btn btnSmall" onclick="refreshTasksOnly()">刷新</button>
+        </div>
+        <div id="taskListContainer" class="assetList"></div>
+      </div>
+    </aside>
+  </main>
+
+  <!-- 模态框 1：三阶剧本改写与首尾帧分镜工作台 -->
+  <div id="scriptModal" class="modalBackdrop">
+    <div class="modalBox wideModal">
+      <div class="sectionHeader">
+        <div>
+          <span style="font-size:15px; font-weight:700;">📜 三阶影视剧本改写 & 场次空间调度工作台</span>
+          <span style="font-size:12px; color:var(--text-secondary); margin-left:10px;">
+            阶段 1：小说心理外化 + 建立 180° 轴线/道具账本 + 自动补全资产 → 阶段 2：编译首尾关键帧分镜表
+          </span>
+        </div>
+        <button class="btn btnSmall" onclick="closeModal('scriptModal')">✕</button>
+      </div>
+      <div class="scriptCompareGrid">
+        <div class="formGroup">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <label>📖 1. 小说原文 (Novel Source)</label>
+            <button class="btn btnSmall btnCyan" onclick="submitNovelRewrite()">✨ 步骤 1：小说 → 分场账本 & 自动提取资产</button>
+          </div>
+          <textarea id="novelInputArea" class="promptTextarea" style="min-height:340px; font-size:12.5px;" placeholder="粘贴小说章节原文..."></textarea>
+        </div>
+        <div class="formGroup">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <label>🎬 2. 影视化分场剧本与空间调度账本 (Scene Blocking & Script)</label>
+            <span id="rewriteStatusBadge" style="font-size:11px; color:var(--emerald-ok);"></span>
+          </div>
+          <textarea id="scriptInputArea" class="promptTextarea" style="min-height:340px; font-size:12.5px; font-family:var(--font-mono);" placeholder="点击左侧“步骤 1”自动生成包含 180° 空间轴线、前世今生角色锁、道具状态流转与精炼对白的工业级分场剧本..."></textarea>
+        </div>
+      </div>
+      <div style="display:flex; justify-content:space-between; align-items:center; padding-top:6px; border-top:1px solid var(--border-subtle);">
+        <span style="font-size:12px; color:var(--text-secondary);">
+          💡 提示：步骤 1 会自动识别新角色（区分前世/今生）、新场景、关键道具并合并入左侧资产库；步骤 2 将严格按分场账本生成首尾帧分镜。
+        </span>
+        <div style="display:flex; gap:10px;">
+          <button class="btn" onclick="closeModal('scriptModal')">关闭</button>
+          <button class="btn btnPrimary" onclick="submitScriptBreakdown()">🚀 步骤 2：按分场账本生成首尾帧分镜表</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 模态框 2：新建短剧项目 -->
+  <div id="newProjectModal" class="modalBackdrop">
+    <div class="modalBox">
+      <div class="sectionHeader">
+        <span style="font-size:15px; font-weight:700;">➕ 新建自主版权短剧项目</span>
+        <button class="btn btnSmall" onclick="closeModal('newProjectModal')">✕</button>
+      </div>
+      <div class="formGroup">
+        <label>短剧名称</label>
+        <input id="newProjTitle" class="formInput" placeholder="例如：风雪孤驿 / 星港机甲师" />
+      </div>
+      <div class="formGroup">
+        <label>题材类型</label>
+        <input id="newProjGenre" class="formInput" value="古风/修仙/硬核逆袭" />
+      </div>
+      <div class="formGroup">
+        <label>全局视觉风格锚点 (Visual Style)</label>
+        <input id="newProjStyle" class="formInput" value="3D国漫电影级写实质感 (High-end Chinese 3D CG & live-action realism)" />
+      </div>
+      <div class="formGroup">
+        <label>画面比例 (Aspect Ratio)</label>
+        <select id="newProjRatio" class="formSelect">
+          <option value="16:9">16:9 横屏电影级 (1344x768)</option>
+          <option value="9:16">9:16 竖屏短剧级 (768x1344)</option>
+        </select>
+      </div>
+      <div class="formGroup">
+        <label>第一集小说/剧本内容（可选，创建后可随时拆解）</label>
+        <textarea id="newProjNovel" class="promptTextarea" style="min-height:120px;"></textarea>
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:10px;">
+        <button class="btn" onclick="closeModal('newProjectModal')">取消</button>
+        <button class="btn btnPrimary" onclick="submitNewProject()">创建项目</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 模态框 3：引擎与无影云端设置 -->
+  <div id="settingsModal" class="modalBackdrop">
+    <div class="modalBox">
+      <div class="sectionHeader">
+        <span style="font-size:15px; font-weight:700;">⚙️ 无影云端 ComfyUI 与大模型设置</span>
+        <button class="btn btnSmall" onclick="closeModal('settingsModal')">✕</button>
+      </div>
+      <div class="formGroup">
+        <label>无影云端 / 本地 ComfyUI 地址 (如 RTX 5880 Ada 48GB)</label>
+        <input id="cfgComfyEndpoint" class="formInput" placeholder="http://127.0.0.1:8188" />
+      </div>
+      <div class="formGroup">
+        <label>H3 采样步数 (默认 20 步原生高质量采样)</label>
+        <input id="cfgH3Steps" type="number" class="formInput" value="20" />
+      </div>
+      <div class="formGroup">
+        <label>LLM 剧本拆解接口 Base URL (OpenAI 兼容)</label>
+        <input id="cfgLlmBaseUrl" class="formInput" placeholder="https://api.deepseek.com/v1" />
+      </div>
+      <div class="formGroup">
+        <label>LLM API Key</label>
+        <input id="cfgLlmApiKey" type="password" class="formInput" placeholder="sk-..." />
+      </div>
+      <div class="formGroup">
+        <label>LLM 模型名称</label>
+        <input id="cfgLlmModel" class="formInput" placeholder="deepseek-chat" />
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:10px;">
+        <button class="btn" onclick="closeModal('settingsModal')">取消</button>
+        <button class="btn btnPrimary" onclick="saveSettings()">保存配置并重测连接</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 模态框 4：查看编译后的底层模型原生 Prompt -->
+  <div id="promptPreviewModal" class="modalBackdrop">
+    <div class="modalBox">
+      <div class="sectionHeader">
+        <span style="font-size:15px; font-weight:700;">🔍 底层视频模型原生编译指令预览</span>
+        <button class="btn btnSmall" onclick="closeModal('promptPreviewModal')">✕</button>
+      </div>
+      <pre id="compiledPromptPre" style="background:var(--bg-void); border:1px solid var(--border-subtle); padding:12px; border-radius:6px; font-family:var(--font-mono); font-size:12px; white-space:pre-wrap; color:var(--text-primary); max-height:60vh; overflow-y:auto;"></pre>
+    </div>
+  </div>
+
+  <script src="/appMain.js"></script>
+</body>
+</html>

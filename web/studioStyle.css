@@ -1,0 +1,744 @@
+/* 
+ * DramaForge Studio - 影视工业暗房级调色室风格样式表 (studioStyle.css)
+ * 美学方向：Cinematic Darkroom & Film Slate (专业导演监视器质感)
+ */
+
+:root {
+  --bg-void: #080a0e;
+  --bg-panel: #10141d;
+  --bg-card: #151a26;
+  --bg-elevated: #1c2333;
+  --border-subtle: #252f42;
+  --border-focus: #f59e0b;
+  --text-primary: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --amber-gold: #f59e0b;
+  --amber-glow: rgba(245, 158, 11, 0.16);
+  --cyan-monitor: #38bdf8;
+  --cyan-glow: rgba(56, 189, 248, 0.15);
+  --emerald-ok: #10b981;
+  --rose-err: #f43f5e;
+  --font-sans: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: "JetBrains Mono", "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--bg-void);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow-x: hidden;
+}
+
+/* 顶部影视场记板导航栏 */
+.topSlateBar {
+  height: 60px;
+  background: linear-gradient(180deg, #141923 0%, #0d1118 100%);
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.brandGroup {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brandBadge {
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+  color: #080a0e;
+  font-weight: 800;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  letter-spacing: 0.06em;
+}
+
+.brandTitle {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.brandSubtitle {
+  font-size: 12px;
+  color: var(--text-secondary);
+  border-left: 1px solid var(--border-subtle);
+  padding-left: 12px;
+}
+
+.topStatusActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cloudPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+}
+
+.statusDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--amber-gold);
+}
+
+.statusDot.online {
+  background: var(--emerald-ok);
+  box-shadow: 0 0 8px var(--emerald-ok);
+}
+
+.statusDot.offline {
+  background: var(--amber-gold);
+}
+
+/* 按钮体系 */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 13px;
+  font-size: 12.5px;
+  font-weight: 600;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.btn:hover {
+  border-color: var(--text-secondary);
+  background: #252f45;
+}
+
+.btnPrimary {
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+  color: #090b0f;
+  border-color: #f59e0b;
+}
+
+.btnPrimary:hover {
+  background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+  border-color: #fbbf24;
+}
+
+.btnCyan {
+  background: rgba(56, 189, 248, 0.14);
+  color: var(--cyan-monitor);
+  border-color: rgba(56, 189, 248, 0.4);
+}
+
+.btnCyan:hover {
+  background: rgba(56, 189, 248, 0.24);
+}
+
+.btnEmerald {
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--emerald-ok);
+  border-color: rgba(16, 185, 129, 0.45);
+}
+
+.btnEmerald:hover {
+  background: rgba(16, 185, 129, 0.25);
+}
+
+.btnSmall {
+  padding: 4px 9px;
+  font-size: 11.5px;
+}
+
+/* 主工作区三栏布局 */
+.studioWorkspace {
+  display: grid;
+  grid-template-columns: 280px 1fr 320px;
+  flex: 1;
+  min-height: calc(100vh - 60px);
+}
+
+/* 左侧：项目、剧集与设定资产栏 */
+.leftSidebar {
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border-subtle);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  overflow-y: auto;
+  max-height: calc(100vh - 60px);
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.sectionTitle {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+}
+
+.projectSelect {
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.assetFilterTabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.filterTab {
+  flex: 1;
+  text-align: center;
+  padding: 5px 0;
+  font-size: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.filterTab.active {
+  background: var(--amber-glow);
+  color: var(--amber-gold);
+  border-color: var(--amber-gold);
+  font-weight: 600;
+}
+
+.assetList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.assetItem {
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  gap: 10px;
+  padding: 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  align-items: center;
+}
+
+.assetThumb {
+  width: 48px;
+  height: 48px;
+  border-radius: 4px;
+  object-fit: cover;
+  background: #0b0e14;
+  border: 1px solid var(--border-subtle);
+}
+
+.assetName {
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.eraBadge {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(56, 189, 248, 0.16);
+  color: var(--cyan-monitor);
+}
+
+.assetDesc {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* 中央：首尾帧连环画分镜导演台 */
+.centerStage {
+  padding: 20px 24px;
+  overflow-y: auto;
+  max-height: calc(100vh - 60px);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.stageToolbar {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 14px 18px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.toolbarStats {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.statChip {
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--bg-card);
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border-subtle);
+}
+
+.statChip strong {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+}
+
+/* 母带预览横幅 */
+.masterBanner {
+  background: linear-gradient(90deg, rgba(16, 185, 129, 0.14) 0%, rgba(16, 20, 29, 0.95) 100%);
+  border: 1px solid rgba(16, 185, 129, 0.45);
+  border-radius: 8px;
+  padding: 14px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.masterVideoPlayer {
+  max-width: 360px;
+  max-height: 180px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  background: #000;
+}
+
+/* 镜头卡片：四联导演监视器画板 */
+.shotListContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.shotCard {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  overflow: hidden;
+  transition: border-color 0.15s ease;
+}
+
+.shotCard:hover {
+  border-color: #3b4966;
+}
+
+.shotCard.actionMode {
+  border-left: 4px solid var(--amber-gold);
+}
+
+.shotCard.dialogueMode {
+  border-left: 4px solid var(--cyan-monitor);
+}
+
+.shotHeader {
+  background: var(--bg-card);
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.shotMetaLeft {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.shotNumBadge {
+  font-family: var(--font-mono);
+  font-weight: 800;
+  font-size: 13px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  color: var(--amber-gold);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+}
+
+.shotTitleInput {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  width: 180px;
+}
+
+.shotTitleInput:focus {
+  border-color: var(--amber-gold);
+  background: var(--bg-void);
+  outline: none;
+}
+
+.modeBadge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.modeBadge.action_fl2va {
+  background: var(--amber-glow);
+  color: var(--amber-gold);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+.modeBadge.dialogue_i2v {
+  background: var(--cyan-glow);
+  color: var(--cyan-monitor);
+  border: 1px solid rgba(56, 189, 248, 0.4);
+}
+
+.frameLockLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(16, 185, 129, 0.12);
+  color: var(--emerald-ok);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  cursor: pointer;
+}
+
+/* 四联监视器网格：首帧 | 动作与台词弧线 | 尾帧 | 视频成片 */
+.quadMonitorGrid {
+  display: grid;
+  grid-template-columns: 230px 1fr 230px 250px;
+  gap: 14px;
+  padding: 14px 16px;
+  align-items: stretch;
+}
+
+@media (max-width: 1480px) {
+  .quadMonitorGrid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.frameSlot {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.slotHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.mediaViewport {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #07090d;
+  border: 1px dashed #2e3a52;
+  border-radius: 6px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.mediaViewport img,
+.mediaViewport video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.emptyViewportHint {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 8px;
+}
+
+.promptTextarea {
+  width: 100%;
+  min-height: 68px;
+  background: var(--bg-void);
+  border: 1px solid var(--border-subtle);
+  border-radius: 5px;
+  color: var(--text-primary);
+  font-size: 11.5px;
+  padding: 6px 8px;
+  resize: vertical;
+  font-family: var(--font-sans);
+}
+
+.promptTextarea:focus {
+  border-color: var(--amber-gold);
+  outline: none;
+}
+
+/* 中间动作弧线与对白区 */
+.arcCenterColumn {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.intentBanner {
+  font-size: 12px;
+  color: var(--amber-gold);
+  background: rgba(245, 158, 11, 0.08);
+  border-left: 3px solid var(--amber-gold);
+  padding: 5px 8px;
+  border-radius: 3px;
+}
+
+.dialogueTrackBox {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 2px;
+}
+
+.dialogueItem {
+  font-size: 12px;
+  background: var(--bg-void);
+  border: 1px solid var(--border-subtle);
+  padding: 5px 8px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.speechKindTag {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--cyan-glow);
+  color: var(--cyan-monitor);
+}
+
+.speechKindTag.internal {
+  background: rgba(244, 63, 94, 0.15);
+  color: #fb7185;
+}
+
+/* 右侧：剧本拆解、任务队列与系统设置栏 */
+.rightSidebar {
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border-subtle);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  overflow-y: auto;
+  max-height: calc(100vh - 60px);
+}
+
+.taskCard {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 9px 11px;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.taskCard.running {
+  border-color: var(--amber-gold);
+}
+
+.taskCard.succeeded {
+  border-color: rgba(16, 185, 129, 0.45);
+}
+
+.taskCard.failed {
+  border-color: var(--rose-err);
+}
+
+/* 弹窗模态框 */
+.modalBackdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 6, 10, 0.78);
+  backdrop-filter: blur(4px);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 300;
+}
+
+.modalBackdrop.open {
+  display: flex;
+}
+
+.modalBox {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  width: 640px;
+  max-width: 92vw;
+  max-height: 86vh;
+  overflow-y: auto;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.modalBox.wideModal {
+  width: 1080px;
+  max-width: 95vw;
+}
+
+.scriptCompareGrid {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: 16px;
+}
+
+@media (max-width: 960px) {
+  .scriptCompareGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 场次空间调度与状态账本卡片 */
+.sceneLedgerSection {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sceneLedgerGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+  gap: 12px;
+}
+
+.sceneLedgerCard {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-top: 3px solid var(--cyan-monitor);
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.propFlowTag {
+  display: inline-block;
+  background: var(--bg-void);
+  border: 1px solid var(--border-subtle);
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-right: 6px;
+  margin-bottom: 4px;
+}
+
+.formGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.formGroup label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.formInput,
+.formSelect {
+  padding: 8px 10px;
+  background: var(--bg-void);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 13px;
+}
