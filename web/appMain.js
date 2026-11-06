@@ -733,13 +733,15 @@ function renderShotCards(shots, tasks = [], assets = []) {
           boundNames.push(cleanName);
         }
       });
-      // 同时扫描标题和提示词中出现的项目资产名
-      const scanText = `${s.title || ""} ${s.intentText || ""} ${s.firstFramePrompt || ""}`;
-      (assets || []).forEach((a) => {
-        if (a.name && !boundNames.includes(a.name) && scanText.includes(a.name)) {
-          boundNames.push(a.name);
-        }
-      });
+      // 仅当 references 为空时才按标题兜底匹配
+      if (!boundNames.length) {
+        const scanText = `${s.title || ""} ${s.intentText || ""}`;
+        (assets || []).forEach((a) => {
+          if (a.name && !boundNames.includes(a.name) && scanText.includes(a.name)) {
+            boundNames.push(a.name);
+          }
+        });
+      }
 
       const boundPillsHtml = boundNames.length
         ? boundNames

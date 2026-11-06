@@ -196,15 +196,23 @@ def _callLlmForSceneLedger(novelText, existingAssets, visualStyle, llmConfig):
     )
 
     systemPrompt = (
-        "你是一位顶级影视短剧总导演与统筹编剧。请将输入的小说原文改写为【结构化场次空间调度账本 (Scene Blocking & State Ledger)】并提取资产。\n"
-        "必须严格遵守以下影视工业规范：\n"
-        "1. 【心理描写视觉外化】：严禁保留大段抽象旁白或超过18字的内心独白！必须把人物的经验、震惊、回忆外化为可见的物理动作（如：抽动鼻翼嗅闻、盯着颤抖的手掌握拳、扶墙撑起身体）。\n"
-        "2. 【时空与身份严格隔离】：若存在穿越/重生/前世今生，必须拆分为不同场次（如 S01 前世现代、S02 今生修仙界），且前世场次的 allowedCharacters 只能写 `@角色名（前世）`，严禁与今生同名角色混用！\n"
-        "3. 【180° 空间站位轴线与道具账本】：每场戏必须明确谁在画面左侧、谁在画面右侧、核心建筑/炉口在哪一侧，以及核心道具从谁手里流转到哪里。\n"
-        "4. 【动作节拍与台词节拍解耦】：每个 beat 对应 1 个未来镜头。包含明显位移、抢夺、攻击、操作器械的标记为 `action_fl2va`（必须有明确的英文首帧姿态 `startPoseEn` 和动作结果尾帧姿态 `endPoseEn`）；以对话交锋为主的标记为 `dialogue_i2v`（单句台词精炼在 4~18 字以内）。\n"
+        "你是一位顶级影视短剧总导演与统筹编剧。请将输入的小说原文改写为【结构化场次空间调度账本 (Scene Blocking & State Ledger)】并提取核心资产。\n"
+        "必须严格遵守以下 6 条影视工业铁律：\n"
+        "1. 【心理描写视觉外化】：严禁保留大段抽象旁白或超过18字的内心独白！必须把人物的经验、震惊、回忆外化为可见的物理动作。\n"
+        "2. 【时空与服化道严格隔离】：若存在穿越/重生/前世今生，必须拆分为不同场次（如 S01 前世现代、S02 今生修仙界）。前世场次的 allowedCharacters 只能写 `角色名（前世）`，今生场次只能写 `角色名（今生）`！古风/修仙场次的描述必须强调古代青铜/石质/木质器物与古装布履，严禁出现现代阀门手轮或现代皮靴。\n"
+        "3. 【资产提取严控精简（拒绝琐碎耗材）】：\n"
+        "   - `character`：只提取本集有明确戏份的角色（3~6个），其 `visualPrompt` 必须使用纯正英文详细描述：精确年龄与成年骨骼体态（如19岁必须写 `19-year-old adult young man, 178cm tall, lean masculine build, NOT a child`，严禁对14岁以上人物使用 `boy` 以免画成幼童）、脸型五官、固定发型、服装颜色材质。\n"
+        "   - `scene`：只提取本集核心主场景（2~4个），纯英文描述空间布局、建筑材质与主光源。\n"
+        "   - `prop`：全集最多只提取 2~4 件最核心的剧情信物或关键焦点道具！严禁把扳手、螺栓、按钮、瓦盆、烧火棍、炭条、布条、火钳等普通工具耗材提取为独立资产（普通工具直接写在镜头的 startPoseEn/endPoseEn 英文句子中即可）。\n"
+        "   - 所有资产的 `visualPrompt` 必须为纯英文视觉描述（不要夹杂 `中文：...` 或角色中文姓名，防止生图模型把汉字当招牌画进画面）。\n"
+        "4. 【镜头景别丰富交替 & 严禁单人特写塞入旁人】：\n"
+        "   - 同一场戏的连续节拍 (beats) 必须交替使用不同景别（如 `Close-up shot` 单人面部/手部特写、`Medium close-up shot` 单人近景、`Medium shot` 双人交锋），严禁连续多个镜头使用相同机位！\n"
+        "   - 【关键】如果某个节拍是单人特写或单人动作，`charactersInShot` 数组必须只填这 1 个角色！并且在 `startPoseEn` 和 `endPoseEn` 中只描述这 1 个角色（严禁提及未入镜的其他角色，防止单人特写变成多人大合照或双胞胎分身）。\n"
+        "5. 【首尾帧同机位动作演进】：对于 `action_fl2va` 动作镜，`startPoseEn` 与 `endPoseEn` 必须保持完全相同的机位景别、相同的人物站立/坐卧基础姿态与背景方位，仅改变核心肢体动作或局部状态（严禁首帧站立、尾帧突然变成盘腿坐地）。\n"
+        "6. 【生图英文描述去名字化】：在 `startPoseEn`、`actionEn`、`endPoseEn` 中，除写明角色名外，必须同时用简短视觉特征指代（如 `the 19-year-old lean worker in gray robe` vs `the fat steward in brown brocade`），让图像模型在双人同框时清晰区分两人外貌，且严禁要求画面出现任何汉字或文字标牌。\n"
         "只输出合法 JSON 对象，格式如下：\n"
         "{\n"
-        '  "extractedAssets": [{"assetType":"character|scene|prop", "name":"准确名称", "roleTag":"身份/用途", "eraTag":"前世|今生|通用", "visualPrompt":"Detailed English & Chinese visual prompt for Flux3 generation", "voiceProfile":"声线特征"}],\n'
+        '  "extractedAssets": [{"assetType":"character|scene|prop", "name":"准确中文名称", "roleTag":"身份/用途", "eraTag":"前世|今生|通用", "visualPrompt":"Pure English detailed visual prompt (strictly no Chinese characters inside visualPrompt)", "voiceProfile":"声线特征"}],\n'
         '  "sceneLedger": [\n'
         "    {\n"
         '      "sceneCode": "S01",\n'
@@ -449,78 +457,147 @@ def _deterministicNovelToSceneLedger(novelText, existingAssets, visualStyle):
     return {"extractedAssets": [], "sceneLedger": sceneLedger}
 
 
+def extractPureEnglishVisual(rawText, eraTag=""):
+    """
+    提取并净化纯英文视觉描述（供 Flux3-Klein 生图模型使用）：
+    1. 彻底剥离所有中文字符、`中文：...` 段落、`[S01...]` 场次标签与 `@角色名`，杜绝 Qwen3-4B 编码器将汉字当成招牌/安全帽文字画进画面；
+    2. 自动校准年龄与骨骼体态描述（消除 boy/young 导致的 8 岁幼童化漂移）；
+    3. 自动为古风/修仙时期注入古代器物与布鞋约束（消除现代橡胶靴与现代铸铁手轮穿帮）。
+    """
+    text = str(rawText or "").strip()
+    if not text:
+        return ""
+
+    # 1. 若存在 "中文：" 或 "中文:" 分隔，优先截取其前面的纯英文部分
+    for sep in ("中文：", "中文:", "Chinese:", "【中文"):
+        if sep in text:
+            text = text.split(sep, 1)[0].strip()
+
+    text = re.sub(r"^\s*English\s*:\s*", "", text, flags=re.IGNORECASE)
+    # 剥离 [S01 ...] 等场次标签与全角括号内容
+    text = re.sub(r"\[S\d+[^\]]*\]", "", text)
+    text = re.sub(r"（[^）]*）", "", text)
+    text = re.sub(r"【[^】]*】", "", text)
+    text = re.sub(r"\([^)]*[\u4e00-\u9fff]+[^)]*\)", "", text)
+    # 移除残留汉字与全角标点
+    text = re.sub(r"[\u4e00-\u9fff，。；：！？、“”‘’《》]+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip(" .,;:-")
+
+    # 2. 防幼童化身高骨骼校准
+    text = re.sub(
+        r"\bhalf-grown\s+(?:Chinese\s+)?boy(?:\s+apprentice)?\b",
+        "16-year-old Chinese teenage youth apprentice (170cm tall, slender teen build, NOT a child)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"\bthin\s+pale\s+young\s+(?:Chinese\s+)?furnace\s+worker\b",
+        "19-year-old adult Chinese young man furnace worker (178cm tall, lean masculine build, sharp jawline, NOT a child)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"\byoung\s+Chinese\s+apprentice\b",
+        "20-year-old adult Chinese young man apprentice (176cm tall, adult build)",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+    # 3. 古风/修仙时代防现代工业穿帮校准
+    isAncient = any(k in str(eraTag) for k in ("今生", "修仙", "古风", "仙侠", "正篇"))
+    if isAncient:
+        text = re.sub(r"\bair\s+gate\s+wheel\b", "ancient bronze furnace sliding damper lever", text, flags=re.IGNORECASE)
+        text = re.sub(r"\bvalve\s+wheel\b", "ancient bronze damper lever", text, flags=re.IGNORECASE)
+        text = re.sub(r"\bglowing\s+runes\b", "subtle engraved ancient patterns without text", text, flags=re.IGNORECASE)
+
+    return text.strip()
+
+
 def breakScriptIntoKeyframedShots(scriptText, projectAssets, visualStyle, llmConfig=None, sceneLedger=None):
     """
     【核心步骤二】将“场次空间调度账本 (sceneLedger)”或剧本拆解为“首帧 + 动作弧线 + 尾帧”结构化分镜列表。
-    优先使用已建立的 sceneLedger 账本（100% 继承每场戏的 180° 轴线、前世今生角色锁与道具状态），
-    确保生成的每个镜头都有严丝合缝的上下游关系！
+    - 严格按本镜实际出场角色 (charactersInShot) 绑定资产，单人特写绝不塞入旁人或全场名单；
+    - 生成纯净无中文干扰的英文生图提示词，杜绝画面出现汉字标牌乱码。
     """
-    assetMap = {a["name"]: a for a in (projectAssets or [])}
+    assetMap = {str(a["name"]).lstrip("@").strip(): a for a in (projectAssets or [])}
 
     if not sceneLedger:
         rewritten = rewriteNovelToSceneLedger(scriptText, projectAssets, visualStyle, llmConfig)
         sceneLedger = rewritten.get("sceneLedger") or []
 
+    cleanStyleEn = extractPureEnglishVisual(visualStyle) or "High-end Chinese 3D CG and live-action cinematic realism"
     compiledShots = []
     shotNum = 1
     for scene in sceneLedger:
         sceneCode = scene.get("sceneCode", "S01")
         eraTag = scene.get("eraTag", "")
-        locName = scene.get("locationName", "主场景")
+        locName = str(scene.get("locationName", "主场景")).lstrip("@").strip()
         locAsset = assetMap.get(locName)
-        locDesc = (locAsset.get("visualPrompt") if locAsset else "") or f"{locName} interior environment"
-        axisEn = scene.get("spatialAxis") or "Maintain strict left-to-right spatial axis."
-        allowedChars = set(scene.get("allowedCharacters") or [])
+        locDescEn = extractPureEnglishVisual(locAsset.get("visualPrompt") if locAsset else "", eraTag) or "Cinematic atmospheric interior environment"
+        axisEn = extractPureEnglishVisual(scene.get("spatialAxis") or "", eraTag)
+        allowedChars = [str(c).lstrip("@").strip() for c in (scene.get("allowedCharacters") or []) if str(c).strip()]
 
         for beat in scene.get("beats") or []:
-            charsInShot = beat.get("charactersInShot") or list(allowedChars)[:2]
-            propsInShot = beat.get("propsInShot") or []
+            # 严格只取本节拍实际入镜的角色（单人镜头绝不强塞第2人）
+            rawCharsInBeat = [str(c).lstrip("@").strip() for c in (beat.get("charactersInShot") or []) if str(c).strip()]
+            charsInShot = rawCharsInBeat if rawCharsInBeat else (allowedChars[:1] if allowedChars else [])
+            propsInShot = [str(p).lstrip("@").strip() for p in (beat.get("propsInShot") or []) if str(p).strip()]
 
             refs = []
             charPromptParts = []
-            for cName in charsInShot:
-                cClean = str(cName).lstrip("@").strip()
+            for idxC, cClean in enumerate(charsInShot):
                 cAsset = assetMap.get(cClean)
-                cDesc = (cAsset.get("visualPrompt") if cAsset else "") or f"{cClean} in consistent period costume"
-                refs.append({"asset": f"@{cClean}", "role": "character", "description": cDesc})
-                charPromptParts.append(f"{cClean} ({cDesc})")
+                cDescEn = extractPureEnglishVisual(cAsset.get("visualPrompt") if cAsset else "", eraTag) or "Adult East Asian character in signature attire"
+                refs.append({"asset": f"@{cClean}", "role": "character", "description": cDescEn})
+                charPromptParts.append(f"Character {idxC + 1} ({cDescEn})")
 
-            refs.append({"asset": f"@{locName}", "role": "scene", "description": locDesc})
+            refs.append({"asset": f"@{locName}", "role": "scene", "description": locDescEn})
 
             propPromptParts = []
-            for pName in propsInShot:
-                pClean = str(pName).lstrip("@").strip()
+            for pClean in propsInShot[:2]:
                 pAsset = assetMap.get(pClean)
-                pDesc = (pAsset.get("visualPrompt") if pAsset else "") or f"Key prop {pClean}"
-                refs.append({"asset": f"@{pClean}", "role": "prop", "description": pDesc})
-                propPromptParts.append(f"{pClean} ({pDesc})")
+                if pAsset:
+                    pDescEn = extractPureEnglishVisual(pAsset.get("visualPrompt") or "", eraTag)
+                    refs.append({"asset": f"@{pClean}", "role": "prop", "description": pDescEn})
+                    if pDescEn:
+                        propPromptParts.append(pDescEn)
 
             framing = beat.get("framing") or "Medium shot"
             movement = beat.get("movement") or "Steady camera"
-            startPoseEn = beat.get("startPoseEn") or beat.get("startPoseCn") or "Character in opening pose."
-            actionEn = beat.get("actionEn") or beat.get("actionCn") or "Executes planned dramatic action."
-            endPoseEn = beat.get("endPoseEn") or beat.get("endPoseCn") or "Character completes action in final pose."
+            startPoseEn = extractPureEnglishVisual(beat.get("startPoseEn") or "", eraTag) or "Character in opening pose."
+            actionEn = extractPureEnglishVisual(beat.get("actionEn") or "", eraTag) or "Executes planned dramatic action."
+            endPoseEn = extractPureEnglishVisual(beat.get("endPoseEn") or "", eraTag) or "Character completes action in final pose."
+
+            if len(charsInShot) == 1:
+                castCountRule = "SOLO SHOT (strictly ONLY 1 person visible in frame, no other people in background)."
+            elif len(charsInShot) == 2:
+                castCountRule = f"TWO-PERSON SHOT (exactly 2 people visible in frame). {axisEn}"
+            else:
+                castCountRule = f"GROUP SHOT. {axisEn}"
+
+            eraRealismRule = (
+                "Ancient Chinese xianxia period setting, traditional coarse cloth robes and cloth shoes, ancient stone and bronze craftsmanship (no modern boots, no modern industrial valves)."
+                if any(k in str(eraTag) for k in ("今生", "修仙", "古风", "仙侠"))
+                else "Modern industrial realistic setting."
+            )
 
             baseHeader = (
-                f"[{visualStyle}], [{sceneCode} · {eraTag}], {framing}. "
-                f"Environment: {locName} ({locDesc}). "
-                f"Visible Characters: {'; '.join(charPromptParts) if charPromptParts else 'Main protagonist'}. "
+                f"Style: {cleanStyleEn}. Camera: {framing}. {castCountRule} "
+                f"Environment: {locDescEn}. {eraRealismRule} "
+                f"Visible Cast: {'; '.join(charPromptParts)}. "
             )
             if propPromptParts:
-                baseHeader += f"Active Props: {'; '.join(propPromptParts)}. "
-            baseHeader += f"180-Degree Blocking Rule: {axisEn} "
+                baseHeader += f"Key Props: {'; '.join(propPromptParts)}. "
 
-            firstFramePrompt = (
-                f"{baseHeader}"
-                f"OPENING KEYFRAME POSE (0.0s): {startPoseEn} "
-                f"({beat.get('startPoseCn', '')}). "
-                "Unified cinematic lighting, clear facial identity, no text or subtitles."
+            noTextSuffix = (
+                "Pure photographic film frame, unified lighting, realistic adult human proportions, "
+                "strictly NO text, NO Chinese characters, NO signboards, NO nameplates, NO helmet labels, NO watermarks."
             )
+
+            firstFramePrompt = f"{baseHeader}OPENING POSE (0.0s): {startPoseEn}. {noTextSuffix}"
             lastFramePrompt = (
-                f"{baseHeader}"
-                f"ENDING KEYFRAME POSE (Completed Payoff): {endPoseEn} "
-                f"({beat.get('endPoseCn', '')}). "
-                "Exact same camera lens, environment lighting, and character costume as opening frame, no text or subtitles."
+                f"{baseHeader}ENDING POSE (Keep exact same camera angle, character standing/sitting posture, face, clothing, and background layout as opening frame; only update the action result): "
+                f"{endPoseEn}. {noTextSuffix}"
             )
 
             compiledShots.append({
@@ -542,7 +619,7 @@ def breakScriptIntoKeyframedShots(scriptText, projectAssets, visualStyle, llmCon
                 "references": refs,
                 "checks": [
                     f"时空防串台检查：仅限【{eraTag}】角色与道具入镜",
-                    f"空间轴线检查：{scene.get('spatialAxisCn') or axisEn}",
+                    f"本镜出场人数检查：仅限 {len(charsInShot)} 人 ({'、'.join(charsInShot)})",
                     f"动作落点检查：{beat.get('endPoseCn') or endPoseEn}",
                 ],
             })
@@ -551,47 +628,49 @@ def breakScriptIntoKeyframedShots(scriptText, projectAssets, visualStyle, llmCon
     return compiledShots
 
 
-def compileAssetSheetPrompt(assetRow, visualStyle="3D国漫电影级写实质感 (High-end Chinese 3D CG & live-action realism)"):
+def compileAssetSheetPrompt(assetRow, visualStyle="High-end Chinese 3D CG & live-action realism"):
     """
-    为角色、场景、道具生成标准定妆照 / 设定图的提示词：
-    - 角色：正面半身与全身定妆照，清晰面部五官、固定发型、服装材质与配饰细节，纯净光影；
-    - 场景：电影级空镜环境设定图（无人干扰），固定建筑布局、主光源方向与色彩基调；
-    - 道具：高精度居中特写设定图，清晰展示结构、材质纹理与年代痕迹。
+    为角色、场景、道具生成标准定妆照 / 设定图的纯英文提示词（彻底剥离中文名与标签，杜绝汉字招牌乱码）：
+    - 角色：半身定妆照，清晰面部五官、固定发型、服装材质与配饰细节；
+    - 场景：电影级空镜环境设定图（无人干扰），固定建筑布局与主光源；
+    - 道具：高精度居中特写设定图。
     """
     aType = assetRow.get("assetType") or "character"
-    name = assetRow.get("name") or "未命名资产"
     era = assetRow.get("eraTag") or ""
-    roleTag = assetRow.get("roleTag") or ""
-    desc = assetRow.get("visualPrompt") or name
+    cleanStyle = extractPureEnglishVisual(visualStyle, era) or "High-end Chinese 3D CG and live-action cinematic realism"
+    cleanDesc = extractPureEnglishVisual(assetRow.get("visualPrompt") or "", era) or "Detailed cinematic subject"
+
+    noTextRule = (
+        "Strictly NO text, NO Chinese characters, NO kanji, NO letters, NO helmet labels, "
+        "NO nameplates, NO signboards, NO watermarks anywhere in the image."
+    )
 
     if aType == "character":
         return (
-            f"Character design reference portrait, [{visualStyle}], "
-            f"Character: {name} ({era} {roleTag}). "
-            f"Locked Appearance & Costume DNA: {desc}. "
-            "Medium close-up portrait showing clear facial features, consistent hairstyle, "
-            "exact clothing texture and color palette, cinematic rim lighting, ultra-detailed skin and fabric, no text, no watermark."
+            f"Character design reference portrait, {cleanStyle}. "
+            f"Solo portrait of 1 person: {cleanDesc}. "
+            "Medium close-up portrait showing clear facial features, adult bone structure, consistent hairstyle, "
+            f"exact clothing texture and color palette, cinematic rim lighting, ultra-detailed skin and fabric. {noTextRule}"
         )
     if aType == "scene":
         return (
-            f"Cinematic environment concept art, empty establishing wide shot (no people), [{visualStyle}], "
-            f"Location: {name} ({era}). "
-            f"Locked Architecture & Lighting DNA: {desc}. "
-            "Clear spatial depth, consistent light source direction, atmospheric volumetric lighting, 8k resolution, no text."
+            f"Cinematic environment concept art, empty establishing wide shot with NO people, {cleanStyle}. "
+            f"Environment details: {cleanDesc}. "
+            f"Clear spatial depth, consistent light source direction, atmospheric volumetric lighting, 8k resolution. {noTextRule}"
         )
     return (
-        f"Hero prop studio close-up reference, [{visualStyle}], "
-        f"Prop: {name} ({era}). "
-        f"Locked Material & Structure DNA: {desc}. "
-        "Centered macro product shot on dark neutral background, intricate craftsmanship, clear material texture, no text."
+        f"Hero prop studio close-up reference, {cleanStyle}. "
+        f"Object details: {cleanDesc}. "
+        f"Centered macro product shot on dark neutral background, intricate craftsmanship, clear material texture. {noTextRule}"
     )
 
 
 def compileLockedKeyframePrompt(shotRow, assets, visualStyle, frameRole="first"):
     """
-    在生成分镜首帧 / 尾帧关键帧时，强制从当前项目的设定资产库 (assets) 中读取最新锁定的
-    角色外貌 DNA、场景光影 DNA 与道具材质 DNA，拼合到提示词最前端的高权重区，
-    彻底防止前后镜头人物变脸、换衣服或场景陈设突变。
+    在生成分镜首帧 / 尾帧关键帧时：
+    1. 严格只读取本镜明确绑定 (references) 的出场角色、场景与核心道具（绝不把同场未出场角色扫进来）；
+    2. 强制转换为 100% 纯英文视觉描述（彻底剥离中文姓名、场次号等元标签，防止画面出现汉字招牌乱码）；
+    3. 注入成年身高体态锁与古风服化道防穿帮锁。
     """
     assetMap = {str(a.get("name", "")).lstrip("@").strip(): a for a in (assets or [])}
     rawRefs = shotRow.get("references")
@@ -607,7 +686,6 @@ def compileLockedKeyframePrompt(shotRow, assets, visualStyle, frameRole="first")
         else shotRow.get("firstFramePrompt")
     ) or ""
 
-    # 匹配本镜引用的资产（若 references 为空则自动扫描标题、意图与提示词中提及的资产名）
     matchedChars = []
     matchedScenes = []
     matchedProps = []
@@ -629,33 +707,67 @@ def compileLockedKeyframePrompt(shotRow, assets, visualStyle, frameRole="first")
             else:
                 matchedProps.append(aObj)
 
-    searchText = f"{shotRow.get('title', '')} {shotRow.get('intentText', '')} {rawPrompt}"
-    for aName, aObj in assetMap.items():
-        if aName and aName not in seenNames and aName in searchText:
-            seenNames.add(aName)
-            if aObj.get("assetType") == "character":
-                matchedChars.append(aObj)
-            elif aObj.get("assetType") == "scene":
-                matchedScenes.append(aObj)
-            else:
-                matchedProps.append(aObj)
-
-    dnaBlocks = [f"[GLOBAL STYLE]: {visualStyle}."]
-    if matchedScenes:
-        scStr = "; ".join(f"{s['name']} ({s.get('visualPrompt') or s['name']})" for s in matchedScenes)
-        dnaBlocks.append(f"[LOCKED SCENE ENVIRONMENT]: {scStr}.")
+    eraTag = ""
     if matchedChars:
-        chStr = "; ".join(
-            f"{c['name']} MUST KEEP EXACT APPEARANCE & COSTUME ({c.get('visualPrompt') or c['name']})"
-            for c in matchedChars
-        )
-        dnaBlocks.append(f"[LOCKED CHARACTER IDENTITY]: {chStr}.")
+        eraTag = matchedChars[0].get("eraTag") or ""
+    elif matchedScenes:
+        eraTag = matchedScenes[0].get("eraTag") or ""
+
+    cleanStyle = extractPureEnglishVisual(visualStyle, eraTag) or "High-end Chinese 3D CG and live-action cinematic realism"
+    framing = extractPureEnglishVisual(shotRow.get("cameraFraming") or "Medium shot", eraTag)
+
+    # 提取本镜核心动作姿态句子（若原提示词中含有 OPENING POSE / ENDING POSE，只截取动作姿态核心句，避免重复堆砌旧的全员名单）
+    poseText = rawPrompt
+    for marker in ("OPENING KEYFRAME POSE (0.0s):", "OPENING POSE (0.0s):", "ENDING KEYFRAME POSE (Completed Payoff):", "ENDING POSE"):
+        if marker in poseText:
+            poseText = poseText.split(marker, 1)[1]
+            break
+    poseCleanEn = extractPureEnglishVisual(poseText, eraTag)
+
+    # 将动作句中的拼音角色名替换为带明确服装外貌特征的英文指代，防止多人同框时穿错衣服或变成双胞胎
+    nameAliasMap = {
+        r"\bLu Dachuan in the past life\b": "the 50-year-old weathered repairman in oil-stained blue work jacket",
+        r"\bLu Dachuan in this life\b": "the 19-year-old lean adult young man in ragged gray cloth robe",
+        r"\bLu Dachuan\b": "the 19-year-old lean adult young man in ragged gray cloth robe" if "今生" in eraTag else "the 50-year-old weathered repairman in blue work jacket",
+        r"\bCao Pangzi\b": "the fat middle-aged steward in dark brown brocade robe",
+        r"\bCao\b": "the fat steward in dark brown brocade robe",
+        r"\bXiao Shitou\b": "the 16-year-old teenage apprentice in patched short gray jacket",
+    }
+    for pat, repl in nameAliasMap.items():
+        poseCleanEn = re.sub(pat, repl, poseCleanEn, flags=re.IGNORECASE)
+
+    dnaBlocks = [f"Cinematic film frame, {cleanStyle}, {framing}."]
+
+    if len(matchedChars) == 1:
+        c = matchedChars[0]
+        cDesc = extractPureEnglishVisual(c.get("visualPrompt") or "", eraTag)
+        dnaBlocks.append(f"SOLO SHOT of ONLY 1 person in frame (strictly no other people visible): {cDesc}.")
+    elif len(matchedChars) >= 2:
+        chList = []
+        for idx, c in enumerate(matchedChars[:3]):
+            cDesc = extractPureEnglishVisual(c.get("visualPrompt") or "", eraTag)
+            posHint = "on screen-left" if idx == 0 else ("on screen-right" if idx == 1 else "in background")
+            chList.append(f"Person {idx + 1} ({posHint}): {cDesc}")
+        dnaBlocks.append(f"Exactly {len(matchedChars[:3])} distinct people in frame: {'; '.join(chList)}.")
+
+    if matchedScenes:
+        sDesc = extractPureEnglishVisual(matchedScenes[0].get("visualPrompt") or "", eraTag)
+        dnaBlocks.append(f"Environment: {sDesc}.")
+
     if matchedProps:
-        prStr = "; ".join(f"{p['name']} ({p.get('visualPrompt') or p['name']})" for p in matchedProps)
-        dnaBlocks.append(f"[LOCKED PROP DESIGN]: {prStr}.")
+        pDescs = [extractPureEnglishVisual(p.get("visualPrompt") or "", eraTag) for p in matchedProps[:2]]
+        pDescs = [d for d in pDescs if d]
+        if pDescs:
+            dnaBlocks.append(f"Active Props: {'; '.join(pDescs)}.")
 
-    if shotRow.get("axisRule"):
-        dnaBlocks.append(f"[180-DEGREE AXIS]: {shotRow.get('axisRule')}.")
+    if frameRole == "last":
+        dnaBlocks.append(
+            f"Ending Action Pose (keep the exact same camera angle, character identity, clothing, and background layout as the opening frame): {poseCleanEn}."
+        )
+    else:
+        dnaBlocks.append(f"Action & Composition: {poseCleanEn}.")
 
-    lockedPrefix = " ".join(dnaBlocks)
-    return f"{lockedPrefix} [SHOT KEYFRAME ({frameRole.upper()})]: {rawPrompt}"
+    dnaBlocks.append(
+        "Pure photographic frame, natural adult proportions, strictly NO text, NO Chinese characters, NO signboards, NO nameplates, NO helmet labels, NO watermarks."
+    )
+    return " ".join(dnaBlocks)
