@@ -147,14 +147,34 @@ def initDatabase():
             "llmApiKey": os.environ.get("LLM_API_KEY", ""),
             "llmModel": os.environ.get("LLM_MODEL", "deepseek-chat"),
             "defaultVideoEngine": "h3_fl2va",
-            "enableUpscale3d": "1",
-            "h3SamplingSteps": "20",
+            "enableUpscale3d": "0",
+            "h3SamplingSteps": "12",
         }
         for k, v in defaults.items():
             conn.execute(
                 "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
                 (k, str(v)),
             )
+        conn.execute("UPDATE settings SET value='12' WHERE key='h3SamplingSteps' AND value='20'")
+        # 清理上次进程退出遗留的僵尸 running 任务，并恢复对应镜头状态
+        nowTs = time.time()
+        conn.execute(
+            """
+            UPDATE renderTasks
+            SET status='failed', phaseText='上次服务重启中断，请重新点击生成', updatedAt=?
+            WHERE status IN ('running', 'queued')
+            """,
+            (nowTs,),
+        )
+        conn.execute(
+            """
+            UPDATE shots
+            SET status = CASE WHEN firstFrameUrl != '' THEN 'keyframes_ready' ELSE 'planned' END,
+                updatedAt = ?
+            WHERE status = 'rendering'
+            """,
+            (nowTs,),
+        )
         # 兼容已有数据库平滑增加 sceneLedgerJson 字段
         epCols = [r[1] for r in conn.execute("PRAGMA table_info(episodes)").fetchall()]
         if "sceneLedgerJson" not in epCols:

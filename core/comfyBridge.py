@@ -229,15 +229,17 @@ def buildH3Fl2vaWorkflow(
     width=1344,
     height=768,
     length=124,
-    steps=20,
-    enableUpscale3d=True,
+    steps=12,
+    enableUpscale3d=False,
     seed=None,
 ):
     """
     构建无影云端 MiniMax-H3 FL2VA (MiniMaxH3ImageToVideo) 首尾帧双锚点工作流：
     - 核心优势：直接将 first_frame 和 last_frame 注入潜空间首尾边界，彻底解决只给参考图导致的
       “动作演一半停住”、“情节表达不出”与“空间透视散架”问题！
-    - 支持挂载 MinimaxH3LatentUpscalerNode3D 提升画面锐度与面部细节。
+    - 挂载 NBH3HyperStep (Fast - Skip 34 Blocks) 加速模块，兼顾 1344x768 原生高清画质与快速出片；
+    - 直接使用原生 VAEDecode 与 VAEDecodeAudio 解包音画联合 NestedTensor，避免第三方 MinimaxH3LatentUpscalerNode3D
+      因调用 NestedTensor.clone() 引发 AttributeError 崩溃。
     """
     if not seed or seed < 0:
         seed = random.randint(1, 2147483647)
@@ -253,6 +255,7 @@ def buildH3Fl2vaWorkflow(
         "4": {"class_type": "VAELoader", "inputs": {"vae_name": "minimax_h3_audio_vae_fp32.safetensors"}},
         "5": {"class_type": "MiniMaxH3MemoryEfficientSageAttentionPatch", "inputs": {"model": ["1", 0]}},
         "6": {"class_type": "MiniMaxH3SigmaShift", "inputs": {"model": ["5", 0], "shift_video": 12.0, "shift_audio": 3.0}},
+        "19": {"class_type": "NBH3HyperStep", "inputs": {"model": ["6", 0], "mode": "Fast - Skip 34 Blocks", "write_report": False}},
         "7": {"class_type": "LoadImage", "inputs": {"image": firstFrameUploadedName}},
     }
 
@@ -271,8 +274,8 @@ def buildH3Fl2vaWorkflow(
         i2vInputs["last_frame"] = ["8", 0]
 
     wf["9"] = {"class_type": "MiniMaxH3ImageToVideo", "inputs": i2vInputs}
-    wf["10"] = {"class_type": "BasicGuider", "inputs": {"model": ["6", 0], "conditioning": ["9", 0]}}
-    wf["11"] = {"class_type": "BasicScheduler", "inputs": {"model": ["6", 0], "scheduler": "simple", "steps": int(steps), "denoise": 1.0}}
+    wf["10"] = {"class_type": "BasicGuider", "inputs": {"model": ["19", 0], "conditioning": ["9", 0]}}
+    wf["11"] = {"class_type": "BasicScheduler", "inputs": {"model": ["19", 0], "scheduler": "simple", "steps": int(steps), "denoise": 1.0}}
     wf["12"] = {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "res_multistep"}}
     wf["13"] = {"class_type": "RandomNoise", "inputs": {"noise_seed": seed}}
     wf["14"] = {
@@ -287,19 +290,6 @@ def buildH3Fl2vaWorkflow(
     }
 
     videoLatentOut = ["14", 0]
-    if enableUpscale3d:
-        wf["15"] = {
-            "class_type": "MinimaxH3LatentUpscalerNode3D",
-            "inputs": {
-                "latent": videoLatentOut,
-                "model_name": "minimax_h3_latent_upscaler_3d_fp16.safetensors",
-                "scale": 1.5,
-                "device": "cuda",
-                "precision": "fp16",
-            },
-        }
-        videoLatentOut = ["15", 0]
-
     wf["16"] = {"class_type": "VAEDecode", "inputs": {"samples": videoLatentOut, "vae": ["3", 0]}}
     wf["17"] = {"class_type": "VAEDecodeAudio", "inputs": {"samples": ["14", 0], "vae": ["4", 0]}}
     wf["18"] = {
@@ -899,8 +889,8 @@ def enqueueShotVideoTask(shotId, engineOverride=None):
                 lastPath = resolveMediaUrlToPath(lastUrl) if lastUrl else None
 
                 engine = engineOverride or shotRow.get("videoEngine") or "h3_fl2va"
-                enableUpscale = str(projRow.get("enableUpscale3d", 1)) == "1"
-                steps = int(getSettingValue("h3SamplingSteps", "20") or 20)
+                enableUpscale = str(projRow.get("enableUpscale3d", 0)) == "1"
+                steps = int(getSettingValue("h3SamplingSteps", "12") or 12)
                 frameLength = calculateH3FrameGrid(shotRow.get("durationSec", 5.0))
 
                 if comfyStatus["online"]:
