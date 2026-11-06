@@ -46,8 +46,11 @@
 
       <div style="flex:1; display:flex; flex-direction:column; min-height:0;">
         <div class="sectionHeader">
-          <span class="sectionTitle">🎭 本剧角色 / 场景 / 道具库</span>
-          <span id="assetCountLabel" style="font-size:11px; color:var(--text-muted);">0 项</span>
+          <span class="sectionTitle">🎭 角色 / 场景 / 道具库</span>
+          <div style="display:flex; align-items:center; gap:6px;">
+            <span id="assetCountLabel" style="font-size:11px; color:var(--text-muted);">0 项</span>
+            <button class="btn btnSmall btnCyan" style="padding:2px 7px; font-size:11px;" onclick="openAssetBibleModal()">🎭 定妆管理</button>
+          </div>
         </div>
         <div class="assetFilterTabs" role="tablist">
           <div class="filterTab active" data-type="all" onclick="setAssetFilter('all')">全部</div>
@@ -59,33 +62,33 @@
       </div>
     </aside>
 
-    <!-- 中央：4 步向导式分镜工作台 -->
+    <!-- 中央：5 步黄金流水线分镜工作台 -->
     <section class="centerStage" id="centerStageScroller">
-      <!-- 顶部 4 步短剧制作流水线导航栏 (Workflow Stepper) -->
-      <nav class="workflowStepper" aria-label="短剧制作四步向导">
+      <!-- 顶部 5 步短剧制作流水线导航栏 (Workflow Stepper) -->
+      <nav class="workflowStepper" aria-label="短剧制作五步向导">
         <!-- 步骤 1 -->
         <div class="stepCard" id="stepCard1">
           <div class="stepHeaderRow">
             <span class="stepNumberBadge">第 ① 步</span>
-            <span class="stepProgressText" id="step1StatText">0 个镜头</span>
+            <span class="stepProgressText" id="step1StatText">待改写</span>
           </div>
-          <div class="stepTitleText">写剧本 & 拆解分镜</div>
-          <div class="stepDescText">粘贴小说原文，AI 自动提取角色场景并拆成逐镜故事板</div>
+          <div class="stepTitleText">写剧本 & 提取设定</div>
+          <div class="stepDescText">粘贴小说原文，AI 自动改写分场剧本并提取角色、场景、道具</div>
           <button class="btn btnCyan btnSmall" style="width:100%;" onclick="openScriptModal()">
-            📜 打开剧本与分镜拆解
+            📜 1. 剧本改写与提取
           </button>
         </div>
 
-        <!-- 步骤 2 -->
+        <!-- 步骤 2（核心新增：先确定人物角色、场景、道具！） -->
         <div class="stepCard" id="stepCard2">
           <div class="stepHeaderRow">
             <span class="stepNumberBadge">第 ② 步</span>
-            <span class="stepProgressText" id="step2StatText">0 / 0 已就绪</span>
+            <span class="stepProgressText" id="step2StatText">0 项设定</span>
           </div>
-          <div class="stepTitleText">生成各镜首尾画面</div>
-          <div class="stepDescText">先画好每一镜的起点图与结果图，锁死人物长相和动作</div>
-          <button class="btn btnCyan btnSmall" style="width:100%;" onclick="batchGenerateKeyframes(50)">
-            🎨 一键补齐本集缺失画面
+          <div class="stepTitleText">确定角色 / 场景 / 道具</div>
+          <div class="stepDescText">核对锁死人物外貌衣着、场景与道具，生成定妆照防止后续变脸</div>
+          <button class="btn btnCyan btnSmall" style="width:100%;" onclick="openAssetBibleModal()">
+            🎭 2. 锁定设定与定妆照
           </button>
         </div>
 
@@ -93,12 +96,12 @@
         <div class="stepCard" id="stepCard3">
           <div class="stepHeaderRow">
             <span class="stepNumberBadge">第 ③ 步</span>
-            <span class="stepProgressText" id="step3StatText">0 / 0 已出片</span>
+            <span class="stepProgressText" id="step3StatText">0 个镜头</span>
           </div>
-          <div class="stepTitleText">排队生成全集视频</div>
-          <div class="stepDescText">后台按顺序一镜一镜自动排队渲染视频，无需手动逐个点</div>
-          <button class="btn btnPrimary btnSmall" style="width:100%;" onclick="batchGenerateAllVideos()">
-            🎬 一键排队生成未完成视频
+          <div class="stepTitleText">拆解分镜故事板</div>
+          <div class="stepDescText">基于第 ② 步锁定的角色与场景，拆解生成每一镜的分镜卡</div>
+          <button class="btn btnCyan btnSmall" style="width:100%;" onclick="triggerDirectBreakdownFromMain()">
+            🎬 3. 生成全集分镜表
           </button>
         </div>
 
@@ -106,13 +109,31 @@
         <div class="stepCard" id="stepCard4">
           <div class="stepHeaderRow">
             <span class="stepNumberBadge">第 ④ 步</span>
-            <span class="stepProgressText" id="step4StatText">待合成</span>
+            <span class="stepProgressText" id="step4StatText">0 / 0 已就绪</span>
           </div>
-          <div class="stepTitleText">合成整集完整短剧</div>
-          <div class="stepDescText">将本集所有镜头无缝拼接为一部完整 MP4 成片并导出</div>
-          <button class="btn btnEmerald btnSmall" style="width:100%;" onclick="mergeMasterEpisode()">
-            🎞️ 合成整集 MP4 成片
+          <div class="stepTitleText">生成各镜首尾画面</div>
+          <div class="stepDescText">自动注入锁定的角色/场景外貌 DNA，画好每一镜的起点与落点图</div>
+          <button class="btn btnCyan btnSmall" style="width:100%;" onclick="batchGenerateKeyframes(50)">
+            🎨 4. 一键生成各镜画面
           </button>
+        </div>
+
+        <!-- 步骤 5 -->
+        <div class="stepCard" id="stepCard5">
+          <div class="stepHeaderRow">
+            <span class="stepNumberBadge">第 ⑤ 步</span>
+            <span class="stepProgressText" id="step5StatText">0 / 0 已出片</span>
+          </div>
+          <div class="stepTitleText">生成视频 & 合成短剧</div>
+          <div class="stepDescText">按顺序自动排队渲染全集视频，完成后一键拼接为完整 MP4</div>
+          <div style="display:flex; gap:4px;">
+            <button class="btn btnPrimary btnSmall" style="flex:1;" onclick="batchGenerateAllVideos()">
+              🎬 排队出视频
+            </button>
+            <button class="btn btnEmerald btnSmall" onclick="mergeMasterEpisode()" title="将已生成的镜头拼接为整集 MP4">
+              🎞️ 合成
+            </button>
+          </div>
         </div>
       </nav>
 
@@ -250,12 +271,63 @@
       </div>
       <div style="display:flex; justify-content:space-between; align-items:center; padding-top:8px; border-top:1px solid var(--border-subtle); flex-wrap:wrap; gap:10px;">
         <span style="font-size:12px; color:var(--text-secondary);">
-          💡 提示：您可以先点「第一步」审阅修改剧本后再点「第二步」；也可以直接点右侧「⚡ 一键全自动完成两步」。
+          💡 <strong>推荐标准流程：</strong>先点左上方「✨ 第一步：改写剧本 & 提取角色场景」，再去「🎭 第 ② 步：确定角色/场景/道具设定」，最后拆解分镜，可 100% 避免后续人物变脸！
+        </span>
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+          <button class="btn" onclick="closeModal('scriptModal')">关闭 (Esc)</button>
+          <button id="btnGoToAssetBible" class="btn btnPrimary" onclick="closeModal('scriptModal'); openAssetBibleModal();">
+            🎭 去第 ② 步：确认角色 / 场景 / 道具设定 ➔
+          </button>
+          <button id="btnStep2Breakdown" class="btn btnCyan" onclick="submitScriptBreakdown(false)">
+            🎬 直接按剧本生成分镜表
+          </button>
+        </div>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- 原生 <dialog> 1.5：第 ② 步 角色 / 场景 / 道具定妆与设定锁定工作台 (Asset Bible Studio) -->
+  <dialog id="assetBibleModal" class="studioDialog wideDialog" closedby="any" aria-labelledby="assetBibleTitle">
+    <div class="dialogInner">
+      <div class="sectionHeader">
+        <div>
+          <span id="assetBibleTitle" style="font-size:15px; font-weight:700;">🎭 第 ② 步：角色 / 场景 / 道具定妆与设定锁定工作台</span>
+          <span style="font-size:12px; color:var(--text-secondary); margin-left:10px;">
+            先在此确定并锁死人物外貌衣着、场景光影与道具材质（可生成定妆参考图），后续所有分镜画面将强制沿用此处设定，杜绝人物变脸！
+          </span>
+        </div>
+        <button class="btn btnSmall" onclick="closeModal('assetBibleModal')">✕</button>
+      </div>
+
+      <!-- 顶部操作与新增栏 -->
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; background:var(--bg-card); padding:10px 14px; border-radius:8px; border:1px solid var(--border-subtle);">
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <span class="statChip activeFilter" data-modal-asset-filter="all" onclick="setModalAssetFilter('all')">全部设定 <strong id="modalAssetTotal">0</strong></span>
+          <span class="statChip" data-modal-asset-filter="character" onclick="setModalAssetFilter('character')">👤 人物角色 <strong id="modalAssetCharCount" style="color:var(--amber-gold);">0</strong></span>
+          <span class="statChip" data-modal-asset-filter="scene" onclick="setModalAssetFilter('scene')">🏞️ 场景环境 <strong id="modalAssetSceneCount" style="color:var(--cyan-monitor);">0</strong></span>
+          <span class="statChip" data-modal-asset-filter="prop" onclick="setModalAssetFilter('prop')">🔧 关键道具 <strong id="modalAssetPropCount" style="color:var(--emerald-ok);">0</strong></span>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button class="btn btnSmall" onclick="createNewAssetItem('character')">➕ 新增角色</button>
+          <button class="btn btnSmall" onclick="createNewAssetItem('scene')">➕ 新增场景</button>
+          <button class="btn btnSmall" onclick="createNewAssetItem('prop')">➕ 新增道具</button>
+          <button class="btn btnSmall btnCyan" onclick="batchGenerateAllAssetImages()">🎨 一键生成全部缺失定妆图/设定图</button>
+        </div>
+      </div>
+
+      <!-- 设定卡片网格容器 -->
+      <div id="assetBibleGrid" class="assetBibleGrid"></div>
+
+      <!-- 底部确认并进入第 ③ 步按钮 -->
+      <div style="display:flex; justify-content:space-between; align-items:center; padding-top:10px; border-top:1px solid var(--border-subtle); flex-wrap:wrap; gap:10px;">
+        <span style="font-size:12px; color:var(--emerald-ok);">
+          🔒 所有修改均实时自动保存。后续生成任何分镜画面时，系统会自动将本页锁定的【角色外貌衣着 + 场景光影 + 道具特征】强制注入底层模型高权重区！
         </span>
         <div style="display:flex; gap:10px;">
-          <button class="btn" onclick="closeModal('scriptModal')">关闭 (Esc)</button>
-          <button id="btnStep2Breakdown" class="btn btnCyan" onclick="submitScriptBreakdown(false)">🎬 第二步：按右侧剧本生成分镜表</button>
-          <button id="btnOneClickAll" class="btn btnPrimary" onclick="submitScriptBreakdown(true)">🚀 一键全自动：改写剧本 + 生成分镜表</button>
+          <button class="btn" onclick="closeModal('assetBibleModal')">稍后继续</button>
+          <button class="btn btnPrimary" onclick="confirmAssetsAndGoToBreakdown()">
+            ✅ 角色/场景/道具已确认无误，进入第 ③ 步：生成全集分镜表 ➔
+          </button>
         </div>
       </div>
     </div>

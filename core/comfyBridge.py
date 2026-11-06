@@ -23,7 +23,12 @@ from pathlib import Path
 from contextlib import closing
 
 from .studioStore import getDbConnection, KEYFRAMES_DIR, VIDEOS_DIR, ASSETS_DIR
-from .directorPlanner import compileFl2vaVideoPrompt, compileWan22VideoPrompt
+from .directorPlanner import (
+    compileFl2vaVideoPrompt,
+    compileWan22VideoPrompt,
+    compileAssetSheetPrompt,
+    compileLockedKeyframePrompt,
+)
 from .continuityManager import (
     resolveMediaUrlToPath,
     syncEpisodeFrameLocks,
@@ -509,6 +514,103 @@ def _generateLocalFallbackVideo(shotRow, firstPath, lastPath, width=1280, height
     return f"/media/videos/{localName}", localPath
 
 
+def _generateLocalFallbackAssetImage(assetRow, width=1024, height=1024):
+    """当无影云离线时，为角色/场景/道具生成本地预演设定图"""
+    from PIL import Image, ImageDraw
+
+    aType = assetRow.get("assetType") or "character"
+    palette = (38, 28, 52) if aType == "character" else (20, 42, 54) if aType == "scene" else (48, 36, 22)
+    canvas = Image.new("RGB", (width, height), palette)
+    draw = ImageDraw.Draw(canvas)
+    for y in range(height):
+        r = min(255, int(palette[0] + (y / height) * 35))
+        g = min(255, int(palette[1] + (y / height) * 28))
+        b = min(255, int(palette[2] + (y / height) * 42))
+        draw.line([(0, y), (width, y)], fill=(r, g, b))
+    draw.rectangle([28, 28, width - 28, height - 28], outline=(245, 158, 11), width=3)
+
+    localName = f"asset_ref_{assetRow['id']}_{int(time.time()*1000)}.png"
+    localPath = ASSETS_DIR / localName
+    canvas.save(str(localPath), format="PNG")
+    return f"/media/assets/{localName}"
+
+
+def enqueueAssetImageTask(assetId):
+    """
+    为单个角色、场景或道具生成标准定妆照 / 设定参考图：
+    生成后的定妆照将保存在 assets.imageUrl 中，供导演审阅锁定，并在后续分镜生成时作为视觉基准。
+    """
+    import shutil
+
+    now = time.time()
+    taskId = f"ast_{uuid.uuid4().hex[:10]}"
+    with closing(getDbConnection()) as conn:
+        asset = conn.execute("SELECT * FROM assets WHERE id=?", (assetId,)).fetchone()
+        if not asset:
+            raise ValueError("未找到指定设定资产")
+        ep = conn.execute("SELECT id FROM episodes WHERE projectId=? ORDER BY episodeNumber ASC LIMIT 1", (asset["projectId"],)).fetchone()
+        epId = ep["id"] if ep else 0
+        conn.execute(
+            """
+            INSERT INTO renderTasks (id, projectId, episodeId, shotId, taskType, engineName, status, phaseText, createdAt, updatedAt)
+            VALUES (?, ?, ?, 0, 'asset_image', 'flux3_klein', 'running', ?, ?, ?)
+            """,
+            (taskId, asset["projectId"], epId, f"正在排队生成 @{asset['name']} 定妆设定图...", now, now),
+        )
+        conn.commit()
+
+    def worker():
+        try:
+            with _COMFY_JOB_SEMAPHORE:
+                with closing(getDbConnection()) as conn:
+                    assetRow = dict(conn.execute("SELECT * FROM assets WHERE id=?", (assetId,)).fetchone())
+                    projRow = dict(conn.execute("SELECT * FROM projects WHERE id=?", (assetRow["projectId"],)).fetchone())
+                    conn.execute(
+                        "UPDATE renderTasks SET phaseText=?, updatedAt=? WHERE id=?",
+                        (f"正在生成 @{assetRow['name']} 定妆照/设定图...", time.time(), taskId),
+                    )
+                    conn.commit()
+
+                visualStyle = projRow.get("visualStyle") or "3D国漫电影级写实质感"
+                promptText = compileAssetSheetPrompt(assetRow, visualStyle=visualStyle)
+                aType = assetRow.get("assetType") or "character"
+                width, height = (1024, 1024) if aType != "scene" else (1472, 832)
+
+                comfyStatus = checkComfyStatus()
+                if comfyStatus["online"]:
+                    wf = buildFlux3KeyframeWorkflow(promptText, width=width, height=height, steps=16)
+                    _, kfUrl, kfPath = _submitAndPollComfyWorkflow(wf, comfyStatus["endpoint"], expectedType="image")
+                    localName = f"asset_ref_{assetId}_{int(time.time())}.png"
+                    assetDest = ASSETS_DIR / localName
+                    shutil.copy2(str(kfPath), str(assetDest))
+                    imgUrl = f"/media/assets/{localName}"
+                    modeNote = f"@{assetRow['name']} 云端定妆设定图已生成"
+                else:
+                    imgUrl = _generateLocalFallbackAssetImage(assetRow, width=width, height=height)
+                    modeNote = f"@{assetRow['name']} 本地预演设定图已生成"
+
+                with closing(getDbConnection()) as conn:
+                    conn.execute(
+                        "UPDATE assets SET imageUrl=?, updatedAt=? WHERE id=?",
+                        (imgUrl, time.time(), assetId),
+                    )
+                    conn.execute(
+                        "UPDATE renderTasks SET status='succeeded', phaseText=?, outputUrl=?, updatedAt=? WHERE id=?",
+                        (modeNote, imgUrl, time.time(), taskId),
+                    )
+                    conn.commit()
+        except Exception as err:
+            with closing(getDbConnection()) as conn:
+                conn.execute(
+                    "UPDATE renderTasks SET status='failed', phaseText='设定图生成失败', errorMessage=?, updatedAt=? WHERE id=?",
+                    (str(err), time.time(), taskId),
+                )
+                conn.commit()
+
+    threading.Thread(target=worker, daemon=True).start()
+    return taskId
+
+
 def enqueueKeyframeTask(shotId, frameRole="both"):
     """
     提交分镜首帧 / 尾帧 / 双关键帧生成任务：
@@ -553,6 +655,7 @@ def enqueueKeyframeTask(shotId, frameRole="both"):
                 syncEpisodeFrameLocks(shotRow["episodeId"])
                 with closing(getDbConnection()) as conn:
                     shotRow = dict(conn.execute("SELECT * FROM shots WHERE id=?", (shotId,)).fetchone())
+                    projectAssets = [dict(a) for a in conn.execute("SELECT * FROM assets WHERE projectId=?", (shotRow["projectId"],))]
 
                 width, height = getAspectRatioDimensions(projRow.get("aspectRatio", "16:9"), isVideo=False)
                 comfyStatus = checkComfyStatus()
@@ -564,14 +667,17 @@ def enqueueKeyframeTask(shotId, frameRole="both"):
                 needFirst = frameRole in ("first", "both") and not (int(shotRow.get("lockFromPrevEnd") or 0) == 1 and firstUrl)
                 needLast = frameRole in ("last", "both") and (shotRow.get("shotCategory") == "action_fl2va" or frameRole == "last")
 
+                lockedFirstPrompt = compileLockedKeyframePrompt(shotRow, projectAssets, projRow.get("visualStyle", ""), frameRole="first")
+                lockedLastPrompt = compileLockedKeyframePrompt(shotRow, projectAssets, projRow.get("visualStyle", ""), frameRole="last")
+
                 if comfyStatus["online"]:
                     if needFirst:
-                        wf1 = buildFlux3KeyframeWorkflow(shotRow["firstFramePrompt"], width=width, height=height, seed=sharedSeed)
+                        wf1 = buildFlux3KeyframeWorkflow(lockedFirstPrompt, width=width, height=height, seed=sharedSeed)
                         _, firstUrl, _ = _submitAndPollComfyWorkflow(wf1, comfyStatus["endpoint"], expectedType="image")
                     if needLast:
-                        wf2 = buildFlux3KeyframeWorkflow(shotRow["lastFramePrompt"], width=width, height=height, seed=sharedSeed)
+                        wf2 = buildFlux3KeyframeWorkflow(lockedLastPrompt, width=width, height=height, seed=sharedSeed)
                         _, lastUrl, _ = _submitAndPollComfyWorkflow(wf2, comfyStatus["endpoint"], expectedType="image")
-                    modeNote = "无影云端 Flux3-Klein 渲染完成"
+                    modeNote = "无影云端 Flux3-Klein 渲染完成（已注入锁定角色/场景DNA）"
                 else:
                     if needFirst:
                         firstUrl = _generateLocalFallbackKeyframe(shotRow, "first", width=width, height=height)
@@ -654,23 +760,26 @@ def enqueueShotVideoTask(shotId, engineOverride=None):
                 syncEpisodeFrameLocks(shotRow["episodeId"])
                 with closing(getDbConnection()) as conn:
                     shotRow = dict(conn.execute("SELECT * FROM shots WHERE id=?", (shotId,)).fetchone())
+                    projectAssets = [dict(a) for a in conn.execute("SELECT * FROM assets WHERE projectId=?", (shotRow["projectId"],))]
 
                 vWidth, vHeight = getAspectRatioDimensions(projRow.get("aspectRatio", "16:9"), isVideo=True)
                 comfyStatus = checkComfyStatus()
 
-                # 2. 确保首帧（以及动作推进镜的尾帧）就绪
+                # 2. 确保首帧（以及动作推进镜的尾帧）就绪，并强制注入锁定的角色/场景/道具 DNA
                 firstUrl = shotRow.get("firstFrameUrl") or ""
                 lastUrl = shotRow.get("lastFrameUrl") or ""
                 if not firstUrl:
                     if comfyStatus["online"]:
-                        wfFirst = buildFlux3KeyframeWorkflow(shotRow["firstFramePrompt"], width=vWidth, height=vHeight)
+                        lockedFirst = compileLockedKeyframePrompt(shotRow, projectAssets, projRow.get("visualStyle", ""), frameRole="first")
+                        wfFirst = buildFlux3KeyframeWorkflow(lockedFirst, width=vWidth, height=vHeight)
                         _, firstUrl, _ = _submitAndPollComfyWorkflow(wfFirst, comfyStatus["endpoint"], expectedType="image")
                     else:
                         firstUrl = _generateLocalFallbackKeyframe(shotRow, "first", width=vWidth, height=vHeight)
 
                 if shotRow.get("shotCategory") == "action_fl2va" and not lastUrl:
                     if comfyStatus["online"]:
-                        wfLast = buildFlux3KeyframeWorkflow(shotRow["lastFramePrompt"], width=vWidth, height=vHeight)
+                        lockedLast = compileLockedKeyframePrompt(shotRow, projectAssets, projRow.get("visualStyle", ""), frameRole="last")
+                        wfLast = buildFlux3KeyframeWorkflow(lockedLast, width=vWidth, height=vHeight)
                         _, lastUrl, _ = _submitAndPollComfyWorkflow(wfLast, comfyStatus["endpoint"], expectedType="image")
                     else:
                         lastUrl = _generateLocalFallbackKeyframe(shotRow, "last", width=vWidth, height=vHeight)

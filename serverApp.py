@@ -31,6 +31,7 @@ from core.directorPlanner import (
     breakScriptIntoKeyframedShots,
     compileFl2vaVideoPrompt,
     compileWan22VideoPrompt,
+    compileLockedKeyframePrompt,
 )
 from core.continuityManager import (
     syncEpisodeFrameLocks,
@@ -41,6 +42,7 @@ from core.comfyBridge import (
     checkComfyStatus,
     enqueueKeyframeTask,
     enqueueShotVideoTask,
+    enqueueAssetImageTask,
 )
 
 WEB_DIR = BASE_DIR / "web"
@@ -190,11 +192,13 @@ class StudioRequestHandler(BaseHTTPRequestHandler):
                             s["references"] = json.loads(s.get("referenceAssetsJson") or "[]")
                             s["checks"] = json.loads(s.get("checksJson") or "[]")
                             s["qcReport"] = json.loads(s.get("qcReportJson") or "{}")
-                            s["compiledPreview"] = (
+                            lockedKfPreview = compileLockedKeyframePrompt(s, assets, proj["visualStyle"], frameRole="first")
+                            vidPreview = (
                                 compileWan22VideoPrompt(s)
                                 if s.get("videoEngine") == "wan22_moe"
                                 else compileFl2vaVideoPrompt(s, hasLastFrame=(s.get("shotCategory") == "action_fl2va"))
                             )
+                            s["compiledPreview"] = f"=== [1] 已注入角色/场景DNA的首帧生成指令 ===\n{lockedKfPreview}\n\n=== [2] 底层视频扩散模型渲染指令 ===\n{vidPreview}"
                             shots.append(s)
 
                     tasks = [
@@ -550,6 +554,80 @@ class StudioRequestHandler(BaseHTTPRequestHandler):
                     conn.commit()
                 return self.sendJson({"ok": True})
 
+            if path == "/api/assets/create":
+                now = time.time()
+                projectId = int(body.get("projectId") or 0)
+                if not projectId:
+                    return self.sendJson({"error": "缺少 projectId"}, 400)
+                assetType = str(body.get("assetType") or "character").strip()
+                name = str(body.get("name") or "新设定").lstrip("@").strip()
+                eraTag = str(body.get("eraTag") or "").strip()
+                roleTag = str(body.get("roleTag") or "").strip()
+                visualPrompt = str(body.get("visualPrompt") or "").strip()
+                with closing(getDbConnection()) as conn:
+                    cur = conn.execute(
+                        """
+                        INSERT INTO assets (projectId, assetType, name, eraTag, roleTag, visualPrompt, imageUrl, createdAt, updatedAt)
+                        VALUES (?, ?, ?, ?, ?, ?, '', ?, ?)
+                        """,
+                        (projectId, assetType, name, eraTag, roleTag, visualPrompt, now, now),
+                    )
+                    conn.commit()
+                    newAssetId = cur.lastrowid
+                return self.sendJson({"ok": True, "assetId": newAssetId})
+
+            mAssetUpdate = re.match(r"^/api/assets/(\d+)/update$", path)
+            if mAssetUpdate:
+                assetId = int(mAssetUpdate.group(1))
+                now = time.time()
+                with closing(getDbConnection()) as conn:
+                    row = conn.execute("SELECT * FROM assets WHERE id=?", (assetId,)).fetchone()
+                    if not row:
+                        return self.sendJson({"error": "资产不存在"}, 404)
+                    name = str(body.get("name", row["name"])).lstrip("@").strip()
+                    assetType = str(body.get("assetType", row["assetType"])).strip()
+                    eraTag = str(body.get("eraTag", row["eraTag"])).strip()
+                    roleTag = str(body.get("roleTag", row["roleTag"])).strip()
+                    visualPrompt = str(body.get("visualPrompt", row["visualPrompt"])).strip()
+                    conn.execute(
+                        "UPDATE assets SET name=?, assetType=?, eraTag=?, roleTag=?, visualPrompt=?, updatedAt=? WHERE id=?",
+                        (name, assetType, eraTag, roleTag, visualPrompt, now, assetId),
+                    )
+                    conn.commit()
+                return self.sendJson({"ok": True})
+
+            mAssetDelete = re.match(r"^/api/assets/(\d+)/delete$", path)
+            if mAssetDelete:
+                assetId = int(mAssetDelete.group(1))
+                with closing(getDbConnection()) as conn:
+                    conn.execute("DELETE FROM assets WHERE id=?", (assetId,))
+                    conn.commit()
+                return self.sendJson({"ok": True})
+
+            mAssetGenImg = re.match(r"^/api/assets/(\d+)/generateImage$", path)
+            if mAssetGenImg:
+                assetId = int(mAssetGenImg.group(1))
+                taskId = enqueueAssetImageTask(assetId)
+                return self.sendJson({"ok": True, "taskId": taskId})
+
+            mBatchAssetImgs = re.match(r"^/api/projects/(\d+)/batchAssetImages$", path)
+            if mBatchAssetImgs:
+                projectId = int(mBatchAssetImgs.group(1))
+                onlyMissing = bool(body.get("onlyMissing", True))
+                with closing(getDbConnection()) as conn:
+                    if onlyMissing:
+                        rows = conn.execute(
+                            "SELECT id FROM assets WHERE projectId=? AND (imageUrl IS NULL OR imageUrl='') ORDER BY id ASC",
+                            (projectId,),
+                        ).fetchall()
+                    else:
+                        rows = conn.execute(
+                            "SELECT id FROM assets WHERE projectId=? ORDER BY id ASC",
+                            (projectId,),
+                        ).fetchall()
+                taskIds = [enqueueAssetImageTask(r["id"]) for r in rows]
+                return self.sendJson({"ok": True, "taskIds": taskIds, "count": len(taskIds)})
+
             mMerge = re.match(r"^/api/episodes/(\d+)/mergeMaster$", path)
             if mMerge:
                 episodeId = int(mMerge.group(1))
@@ -566,12 +644,17 @@ class StudioRequestHandler(BaseHTTPRequestHandler):
 
 def main():
     initDatabase()
-    # 若数据库为空，首次启动自动初始化公共演示项目
+    # 若数据库从未初始化过演示项目且为空，首次启动自动初始化公共演示项目
     with closing(getDbConnection()) as conn:
         cnt = conn.execute("SELECT count(*) FROM projects").fetchone()[0]
-    if cnt == 0:
+        seededRow = conn.execute("SELECT value FROM settings WHERE key='demoSeeded'").fetchone()
+        alreadySeeded = bool(seededRow and seededRow["value"] == "1")
+    if cnt == 0 and not alreadySeeded:
         try:
             demoId = seedBuiltinDemoProject()
+            with closing(getDbConnection()) as conn:
+                conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('demoSeeded', '1')")
+                conn.commit()
             print(f"[dramaStudio] 已自动创建内置公共演示项目 (ID={demoId})")
         except Exception as err:
             print(f"[dramaStudio] 创建演示项目跳过: {err}")

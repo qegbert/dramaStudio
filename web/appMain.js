@@ -198,19 +198,27 @@ async function loadWorkspace(projectId, episodeId = null) {
 
   renderEpisodeSelector(ws.episodes || [], currentState.activeEpisodeId);
   renderAssetList(ws.assets || []);
-  updateWorkflowStepper(ws.shots || [], ws.activeEpisode);
+  updateWorkflowStepper(ws.shots || [], ws.activeEpisode, ws.assets || []);
   renderMasterBanner(ws.activeEpisode);
   renderSceneLedger(ws.activeEpisode);
   renderFilmstripRibbon(ws.shots || []);
-  renderShotCards(ws.shots || [], ws.tasks || []);
+  renderShotCards(ws.shots || [], ws.tasks || [], ws.assets || []);
   renderTaskList(ws.tasks || [], ws.shots || []);
+  if (document.getElementById("assetBibleModal") && document.getElementById("assetBibleModal").open) {
+    renderAssetBibleModal();
+  }
 }
 
 /**
- * 更新顶部 4 步短剧制作向导条，自动高亮用户当前应该操作的下一步
+ * 更新顶部 5 步黄金流水线向导条，严格遵循：
+ * ① 剧本改写与提取设定 -> ② 确定角色/场景/道具定妆 -> ③ 拆解分镜 -> ④ 生成各镜首尾画面 -> ⑤ 生成视频与合成
  */
-function updateWorkflowStepper(shots, activeEpisode) {
-  const total = shots.length;
+function updateWorkflowStepper(shots, activeEpisode, assets = []) {
+  const totalShots = shots.length;
+  const totalAssets = assets.length;
+  const imagedAssets = assets.filter((a) => Boolean(a.imageUrl)).length;
+  const hasSceneLedger = Boolean(activeEpisode && activeEpisode.sceneLedger && activeEpisode.sceneLedger.length > 0);
+
   const kfReadyCount = shots.filter((s) => {
     if (s.shotCategory === "action_fl2va") {
       return Boolean(s.firstFrameUrl && s.lastFrameUrl);
@@ -224,25 +232,45 @@ function updateWorkflowStepper(shots, activeEpisode) {
   const s2Text = document.getElementById("step2StatText");
   const s3Text = document.getElementById("step3StatText");
   const s4Text = document.getElementById("step4StatText");
+  const s5Text = document.getElementById("step5StatText");
 
-  if (s1Text) s1Text.textContent = total > 0 ? `已拆解 ${total} 镜` : "待拆解";
-  if (s2Text) s2Text.textContent = `${kfReadyCount} / ${total} 已就绪`;
-  if (s3Text) s3Text.textContent = `${vidReadyCount} / ${total} 已出片`;
-  if (s4Text) s4Text.textContent = hasMaster ? "✅ 已合成成片" : vidReadyCount > 0 ? `可合成 (${vidReadyCount}镜)` : "待生成视频";
-
-  // 判断当前推荐哪一步高亮
-  let recommendedStep = 1;
-  if (total === 0) {
-    recommendedStep = 1;
-  } else if (kfReadyCount < total) {
-    recommendedStep = 2;
-  } else if (vidReadyCount < total) {
-    recommendedStep = 3;
-  } else {
-    recommendedStep = 4;
+  if (s1Text) {
+    s1Text.textContent = hasSceneLedger
+      ? `✅ 已建 ${activeEpisode.sceneLedger.length} 场剧本`
+      : "待改写提取";
+  }
+  if (s2Text) {
+    s2Text.textContent =
+      totalAssets > 0
+        ? `共 ${totalAssets} 项 (${imagedAssets} 已定妆)`
+        : "待提取设定";
+  }
+  if (s3Text) {
+    s3Text.textContent = totalShots > 0 ? `已拆解 ${totalShots} 镜` : "待拆解分镜";
+  }
+  if (s4Text) {
+    s4Text.textContent = `${kfReadyCount} / ${totalShots} 画面就绪`;
+  }
+  if (s5Text) {
+    s5Text.textContent = hasMaster
+      ? "✅ 已合成整集"
+      : `${vidReadyCount} / ${totalShots} 已出视频`;
   }
 
-  [1, 2, 3, 4].forEach((num) => {
+  let recommendedStep = 1;
+  if (!hasSceneLedger && totalAssets === 0 && totalShots === 0) {
+    recommendedStep = 1;
+  } else if (totalAssets > 0 && totalShots === 0) {
+    recommendedStep = 2;
+  } else if (totalShots === 0) {
+    recommendedStep = 3;
+  } else if (kfReadyCount < totalShots) {
+    recommendedStep = 4;
+  } else {
+    recommendedStep = 5;
+  }
+
+  [1, 2, 3, 4, 5].forEach((num) => {
     const card = document.getElementById(`stepCard${num}`);
     if (card) {
       card.classList.toggle("recommended", num === recommendedStep);
@@ -323,7 +351,12 @@ function renderAssetList(assets) {
   document.getElementById("assetCountLabel").textContent = `${filtered.length} 项`;
   const container = document.getElementById("assetList");
   if (!filtered.length) {
-    container.innerHTML = `<div style="color:var(--text-muted); font-size:12px; padding:12px 0;">当前分类下暂无资产</div>`;
+    container.innerHTML = `
+      <div style="color:var(--text-muted); font-size:12px; padding:12px 0; display:flex; flex-direction:column; gap:8px;">
+        <span>当前分类下暂无设定资产。</span>
+        <button class="btn btnSmall" onclick="openAssetBibleModal()">➕ 打开定妆台手动新增或从剧本提取</button>
+      </div>
+    `;
     return;
   }
   container.innerHTML = filtered
@@ -331,8 +364,8 @@ function renderAssetList(assets) {
       const typeCn =
         a.assetType === "character" ? "角色" : a.assetType === "scene" ? "场景" : "道具";
       const thumbHtml = a.imageUrl
-        ? `<img class="assetThumb" src="${escapeHtml(a.imageUrl)}" alt="${escapeHtml(a.name)}" onclick="openLightbox('${escapeHtml(a.imageUrl)}', '@${escapeHtml(a.name)} · 设定原图')" style="cursor:zoom-in;" />`
-        : `<div class="assetThumb" style="display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--text-muted);">${typeCn}</div>`;
+        ? `<img class="assetThumb" src="${escapeHtml(a.imageUrl)}" alt="${escapeHtml(a.name)}" onclick="openLightbox('${escapeHtml(a.imageUrl)}', '@${escapeHtml(a.name)} · 锁定定妆设定图')" style="cursor:zoom-in;" title="点击放大查看定妆照" />`
+        : `<div class="assetThumb" onclick="triggerAssetImage(${a.id})" style="display:flex;align-items:center;justify-content:center;font-size:10.5px;color:var(--amber-gold);cursor:pointer;text-align:center;line-height:1.2;" title="点击生成定妆设定图">🎨生成<br/>定妆图</div>`;
       const eraBadge = a.eraTag
         ? `<span class="eraBadge">${escapeHtml(a.eraTag)}</span>`
         : "";
@@ -340,9 +373,15 @@ function renderAssetList(assets) {
         <div class="assetItem">
           ${thumbHtml}
           <div style="min-width:0;">
-            <div class="assetName">@${escapeHtml(a.name)} ${eraBadge}</div>
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:4px;">
+              <div class="assetName">@${escapeHtml(a.name)} ${eraBadge}</div>
+              <div style="display:flex; gap:3px; flex-shrink:0;">
+                <button class="btn btnSmall" style="padding:1px 5px; font-size:10px;" onclick="triggerAssetImage(${a.id})" title="生成或重绘定妆参考图">🎨</button>
+                <button class="btn btnSmall" style="padding:1px 5px; font-size:10px;" onclick="openAssetBibleModal(${a.id})" title="编辑外貌衣着或场景设定">✏️</button>
+              </div>
+            </div>
             <div style="font-size:11px; color:var(--amber-gold);">${escapeHtml(a.roleTag || typeCn)}</div>
-            <div class="assetDesc" title="${escapeHtml(a.visualPrompt)}">${escapeHtml(a.visualPrompt || "暂无外貌/环境描述")}</div>
+            <div class="assetDesc" title="${escapeHtml(a.visualPrompt)}">${escapeHtml(a.visualPrompt || "暂无外貌/环境描述，点击右上角 ✏️ 补充")}</div>
           </div>
         </div>
       `;
@@ -433,14 +472,14 @@ function setShotFilter(filterMode) {
     chip.classList.toggle("activeFilter", chip.getAttribute("data-shot-filter") === filterMode);
   });
   if (currentState.workspace) {
-    renderShotCards(currentState.workspace.shots || [], currentState.workspace.tasks || []);
+    renderShotCards(currentState.workspace.shots || [], currentState.workspace.tasks || [], currentState.workspace.assets || []);
   }
 }
 
 function onShotSearchInput(keyword) {
   currentState.shotSearchKeyword = (keyword || "").trim().toLowerCase();
   if (currentState.workspace) {
-    renderShotCards(currentState.workspace.shots || [], currentState.workspace.tasks || []);
+    renderShotCards(currentState.workspace.shots || [], currentState.workspace.tasks || [], currentState.workspace.assets || []);
   }
 }
 
@@ -470,7 +509,7 @@ function filterShotsList(shots) {
   });
 }
 
-function renderShotCards(shots, tasks = []) {
+function renderShotCards(shots, tasks = [], assets = []) {
   document.getElementById("statTotalShots").textContent = shots.length;
   document.getElementById("statActionShots").textContent = shots.filter(
     (s) => s.shotCategory === "action_fl2va"
@@ -490,25 +529,45 @@ function renderShotCards(shots, tasks = []) {
   if (!shots.length) {
     const ep = currentState.workspace && currentState.workspace.activeEpisode;
     const rawNovel = (ep && (ep.novelContent || ep.scriptContent)) || "";
-    if (rawNovel.trim().length > 0) {
+    const hasLedger = Boolean(ep && ep.sceneLedger && ep.sceneLedger.length > 0);
+    if (hasLedger || assets.length > 0) {
+      container.innerHTML = `
+        <div style="background:var(--bg-panel); border:1px solid rgba(6,182,212,0.45); border-radius:12px; padding:32px 28px; display:flex; flex-direction:column; gap:14px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+            <div style="font-size:16px; font-weight:700; color:var(--cyan-monitor);">
+              🎭 已提取 ${assets.length} 项角色 / 场景 / 道具设定，请先确认定妆设定后再拆解分镜
+            </div>
+            <span class="eraBadge">当前处于第 ② 步 ➔ 第 ③ 步</span>
+          </div>
+          <div style="font-size:13px; color:var(--text-secondary);">
+            💡 <strong>为什么先确定角色、场景与道具？</strong> 先在定妆台锁死每个角色的脸型发型、服装颜色与场景光影，后续生成的每一镜画面都会强制沿用同一套设定 DNA，彻底杜绝人物变脸与换装！
+          </div>
+          <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
+            <button class="btn btnPrimary" onclick="openAssetBibleModal()">
+              🎭 打开第 ② 步：核对角色 / 场景 / 道具设定并生成定妆图
+            </button>
+            <button class="btn btnCyan" onclick="triggerDirectBreakdownFromMain()">
+              🎬 设定已确认，直接执行第 ③ 步：生成全集分镜表
+            </button>
+          </div>
+        </div>
+      `;
+    } else if (rawNovel.trim().length > 0) {
       const previewSnippet = escapeHtml(rawNovel.trim().slice(0, 140)) + (rawNovel.trim().length > 140 ? "..." : "");
       container.innerHTML = `
         <div style="background:var(--bg-panel); border:1px solid rgba(245,158,11,0.45); border-radius:12px; padding:32px 28px; display:flex; flex-direction:column; gap:14px;">
           <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
             <div style="font-size:16px; font-weight:700; color:var(--amber-gold);">
-              📖 已录入本集小说/剧本内容（共 ${rawNovel.trim().length} 字），尚未拆解为分镜
+              📖 已录入本集小说原文（共 ${rawNovel.trim().length} 字），请先提取角色/场景设定
             </div>
-            <span class="eraBadge">待执行第 ① 步：剧本改写与分镜拆解</span>
+            <span class="eraBadge">待执行第 ① 步 ➔ 第 ② 步</span>
           </div>
           <div style="background:var(--bg-void); border:1px solid var(--border-subtle); border-radius:8px; padding:12px; font-size:12.5px; color:var(--text-secondary);">
             <strong>内容摘要：</strong>${previewSnippet}
           </div>
           <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
-            <button class="btn btnPrimary" onclick="openScriptModalAndRunAuto()">
-              🚀 一键全自动：改写分场剧本 + 提取角色场景 + 生成全集分镜表
-            </button>
-            <button class="btn btnCyan" onclick="openScriptModal()">
-              📜 打开双栏剧本工作台（分步审阅/微调）
+            <button class="btn btnPrimary" onclick="openScriptModal(true)">
+              📜 第 ① 步：改写分场剧本 & 自动提取角色/场景/道具
             </button>
           </div>
         </div>
@@ -517,8 +576,8 @@ function renderShotCards(shots, tasks = []) {
       container.innerHTML = `
         <div style="background:var(--bg-panel); border:1px dashed var(--border-subtle); border-radius:12px; padding:42px 24px; text-align:center; color:var(--text-secondary);">
           <div style="font-size:15px; font-weight:700; color:var(--text-primary); margin-bottom:8px;">📜 当前剧集还没有录入小说或分镜</div>
-          <div style="margin-bottom:16px;">请点击下方按钮粘贴小说原文，AI 将自动为您提取角色场景并拆解出每一镜的首尾帧分镜卡片。</div>
-          <button class="btn btnPrimary" onclick="openScriptModal()">📜 打开剧本与分镜拆解工作台</button>
+          <div style="margin-bottom:16px;">请先点击第 ① 步粘贴小说原文提取角色/场景/道具，确认定妆后再拆解分镜。</div>
+          <button class="btn btnPrimary" onclick="openScriptModal()">📜 打开第 ① 步：剧本改写与设定提取</button>
         </div>
       `;
     }
@@ -610,6 +669,38 @@ function renderShotCards(shots, tasks = []) {
             .join("")
         : `<div style="font-size:12px; color:var(--text-muted);">本镜为纯动作/神态表演（无开口台词）</div>`;
 
+      // 构建本镜绑定的角色/场景/道具胶囊
+      const assetByName = {};
+      (assets || []).forEach((a) => {
+        assetByName[String(a.name || "").lstrip ? a.name : String(a.name || "").replace(/^@/, "").trim()] = a;
+      });
+      const refs = Array.isArray(s.references) ? s.references : [];
+      const boundNames = [];
+      refs.forEach((r) => {
+        const cleanName = String((r && r.asset) || "").replace(/^@/, "").trim();
+        if (cleanName && !boundNames.includes(cleanName)) {
+          boundNames.push(cleanName);
+        }
+      });
+      // 同时扫描标题和提示词中出现的项目资产名
+      const scanText = `${s.title || ""} ${s.intentText || ""} ${s.firstFramePrompt || ""}`;
+      (assets || []).forEach((a) => {
+        if (a.name && !boundNames.includes(a.name) && scanText.includes(a.name)) {
+          boundNames.push(a.name);
+        }
+      });
+
+      const boundPillsHtml = boundNames.length
+        ? boundNames
+            .map((nm) => {
+              const aObj = assetByName[nm];
+              const thumb = aObj && aObj.imageUrl ? `<img src="${escapeHtml(aObj.imageUrl)}" alt="${escapeHtml(nm)}" />` : "🔒";
+              const aId = aObj ? aObj.id : null;
+              return `<span class="boundAssetPill" onclick="${aId ? `openAssetBibleModal(${aId})` : "openAssetBibleModal()"}" title="点击查看或微调 @${escapeHtml(nm)} 的锁定外貌设定">${thumb} @${escapeHtml(nm)}</span>`;
+            })
+            .join("")
+        : `<span style="color:var(--text-muted);">未绑定特定资产</span>`;
+
       const statusBadge = s.videoUrl
         ? `<span class="eraBadge" style="background:rgba(16,185,129,0.2);color:var(--emerald-ok);">✅ 视频已生成 (${s.durationSec}s)</span>`
         : s.firstFrameUrl
@@ -683,6 +774,10 @@ function renderShotCards(shots, tasks = []) {
               <div class="slotHeader">
                 <span>📖 第二步：本镜剧情动作 & 角色台词</span>
                 <span style="font-family:var(--font-mono); font-size:11px; color:var(--amber-gold);">${s.durationSec}秒 · ${escapeHtml(s.cameraFraming)}</span>
+              </div>
+              <div class="shotBoundAssetsRow">
+                <strong style="color:var(--cyan-monitor);">🔒 已绑定角色/场景设定：</strong>
+                ${boundPillsHtml}
               </div>
               <div class="intentBanner">🎯 <strong>剧情看点：</strong>${escapeHtml(s.intentText || s.title || "推进本场核心剧情")}</div>
               <div class="storyActionReadonly" title="可在下方折叠抽屉中修改详细动作描述">
@@ -779,6 +874,7 @@ function renderTaskList(tasks, shots = []) {
     both_keyframe: "🎨 生成首尾画面",
     first_keyframe: "🖼️ 重画起点画面",
     last_keyframe: "🖼️ 重画结果画面",
+    asset_image: "🎭 生成角色/场景定妆图",
   };
 
   const statusCnMap = {
@@ -793,9 +889,12 @@ function renderTaskList(tasks, shots = []) {
       const matchedShot = shotMap[t.shotId];
       const shotNum = t.shotNumber || (matchedShot ? matchedShot.shotNumber : t.shotId);
       const shotTitle = t.shotTitle || (matchedShot ? matchedShot.title : "");
-      const titleDisplay = shotTitle
-        ? `第 ${shotNum} 镜《${escapeHtml(shotTitle)}》`
-        : `第 ${shotNum} 镜`;
+      const titleDisplay =
+        t.taskType === "asset_image"
+          ? "🎭 角色/场景定妆设定"
+          : shotTitle
+          ? `第 ${shotNum} 镜《${escapeHtml(shotTitle)}》`
+          : `第 ${shotNum} 镜`;
       const typeDisplay = taskTypeCnMap[t.taskType] || t.taskType;
       const statusDisplay = statusCnMap[t.status] || t.status;
 
@@ -809,7 +908,7 @@ function renderTaskList(tasks, shots = []) {
       const isRunning = t.status === "running" || t.status === "queued";
 
       return `
-        <div class="taskCard ${escapeHtml(t.status)}" onclick="scrollToShot(${t.shotId})" title="点击定位到${titleDisplay}">
+        <div class="taskCard ${escapeHtml(t.status)}" onclick="${t.taskType === "asset_image" ? "openAssetBibleModal()" : `scrollToShot(${t.shotId})`}" title="点击查看详情">
           <div style="display:flex; justify-content:space-between; align-items:center; gap:6px;">
             <strong style="color:var(--text-primary);">${titleDisplay}</strong>
             <span style="font-size:11.5px; font-weight:700; color:${badgeColor};">${statusDisplay}</span>
@@ -1202,11 +1301,11 @@ async function submitNovelRewrite() {
     badge.textContent = `✅ 已生成 ${res.sceneCount} 场剧本，提取/更新 ${res.assetCountChanged} 项资产！`;
     finishScriptProgressTracker(
       true,
-      `第一步完成：已生成 ${res.sceneCount} 场标准影视剧本，并自动入库 ${res.assetCountChanged} 项角色/场景/道具！`,
-      "您可以检查或微调下方右侧的分场剧本，然后点击右下角「🎬 第二步：按右侧剧本生成分镜表」完成拆解。",
+      `第一步完成：已生成 ${res.sceneCount} 场标准影视剧本，并自动提取 ${res.assetCountChanged} 项角色/场景/道具！`,
+      "👉 强烈建议：请点击右下角「🎭 去第 ② 步：确认角色 / 场景 / 道具设定 ➔」，先核对并锁死人物外貌衣着、生成定妆图，再进入第 ③ 步拆解分镜！",
       3
     );
-    showToast(`已完成剧本改写并自动入库 ${res.assetCountChanged} 项角色/场景/道具`, "success");
+    showToast(`已提取 ${res.assetCountChanged} 项角色/场景/道具，请进入第 ② 步确认定妆设定！`, "success");
     await loadWorkspace(currentState.activeProjectId, currentState.activeEpisodeId);
   } catch (err) {
     badge.textContent = "❌ 改写失败";
@@ -1214,6 +1313,227 @@ async function submitNovelRewrite() {
     showToast(`小说改写失败: ${err.message}`, "error");
   } finally {
     setScriptButtonsBusy(false);
+  }
+}
+
+/* ============================================================================
+ * 第 ② 步：角色 / 场景 / 道具定妆与设定锁定工作台 (Asset Bible Studio)
+ * ============================================================================ */
+let modalAssetFilter = "all";
+
+function openAssetBibleModal(focusAssetId = null) {
+  if (!currentState.workspace) {
+    showToast("请先选择或新建一个短剧项目", "error");
+    return;
+  }
+  renderAssetBibleModal();
+  openDialog("assetBibleModal");
+  if (focusAssetId) {
+    setTimeout(() => {
+      const card = document.getElementById(`bible-card-${focusAssetId}`);
+      if (card) {
+        card.scrollIntoView({ behavior: "smooth", block: "center" });
+        card.style.borderColor = "var(--amber-gold)";
+      }
+    }, 120);
+  }
+}
+
+function setModalAssetFilter(filterType) {
+  modalAssetFilter = filterType;
+  document.querySelectorAll("[data-modal-asset-filter]").forEach((el) => {
+    el.classList.toggle("activeFilter", el.getAttribute("data-modal-asset-filter") === filterType);
+  });
+  renderAssetBibleModal();
+}
+
+function renderAssetBibleModal() {
+  const assets = (currentState.workspace && currentState.workspace.assets) || [];
+  const totalEl = document.getElementById("modalAssetTotal");
+  const charEl = document.getElementById("modalAssetCharCount");
+  const sceneEl = document.getElementById("modalAssetSceneCount");
+  const propEl = document.getElementById("modalAssetPropCount");
+
+  if (totalEl) totalEl.textContent = assets.length;
+  if (charEl) charEl.textContent = assets.filter((a) => a.assetType === "character").length;
+  if (sceneEl) sceneEl.textContent = assets.filter((a) => a.assetType === "scene").length;
+  if (propEl) propEl.textContent = assets.filter((a) => a.assetType === "prop").length;
+
+  const grid = document.getElementById("assetBibleGrid");
+  if (!grid) return;
+
+  const filtered =
+    modalAssetFilter === "all"
+      ? assets
+      : assets.filter((a) => a.assetType === modalAssetFilter);
+
+  if (!filtered.length) {
+    grid.innerHTML = `
+      <div style="grid-column:1 / -1; background:var(--bg-card); border:1px dashed var(--border-subtle); border-radius:10px; padding:36px; text-align:center; color:var(--text-secondary);">
+        <div style="font-size:14px; font-weight:700; color:var(--text-primary); margin-bottom:6px;">当前分类下还没有角色 / 场景 / 道具设定</div>
+        <div style="margin-bottom:12px;">您可以先在「第 ① 步」从小说自动提取，或者直接点击右上方「➕ 新增角色 / 场景 / 道具」手动添加。</div>
+      </div>
+    `;
+    return;
+  }
+
+  grid.innerHTML = filtered
+    .map((a) => {
+      const typeLabel =
+        a.assetType === "character" ? "👤 人物角色" : a.assetType === "scene" ? "🏞️ 场景环境" : "🔧 关键道具";
+      const thumbHtml = a.imageUrl
+        ? `<img src="${escapeHtml(a.imageUrl)}" alt="${escapeHtml(a.name)}" onclick="openLightbox('${escapeHtml(a.imageUrl)}', '@${escapeHtml(a.name)} · 定妆设定大图')" />`
+        : `<div class="emptyViewportHint" style="font-size:11px;">尚未生成定妆图<br/>点击下方按钮生成</div>`;
+
+      return `
+        <div class="assetBibleCard" id="bible-card-${a.id}">
+          <div class="assetBibleThumbCol">
+            <div class="assetBibleViewport">${thumbHtml}</div>
+            <button class="btn btnSmall btnCyan" style="width:100%;" onclick="triggerAssetImage(${a.id})">
+              🎨 ${a.imageUrl ? "重画定妆图" : "生成定妆图"}
+            </button>
+          </div>
+          <div style="display:flex; flex-direction:column; gap:7px; min-width:0;">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:6px;">
+              <div style="display:flex; align-items:center; gap:6px; flex:1;">
+                <span class="eraBadge">${typeLabel}</span>
+                <input
+                  class="formInput"
+                  style="padding:4px 8px; font-weight:700; width:130px;"
+                  value="${escapeHtml(a.name)}"
+                  placeholder="名称"
+                  onchange="saveAssetField(${a.id}, {name: this.value})"
+                />
+                <input
+                  class="formInput"
+                  style="padding:4px 8px; font-size:11.5px; width:115px;"
+                  value="${escapeHtml(a.eraTag || "")}"
+                  placeholder="时期(如:今生/前世)"
+                  onchange="saveAssetField(${a.id}, {eraTag: this.value})"
+                />
+              </div>
+              <button class="btn btnSmall btnDanger" style="padding:3px 7px;" onclick="deleteAssetItem(${a.id})" title="删除此项设定">🗑️</button>
+            </div>
+            <div>
+              <input
+                class="formInput"
+                style="padding:4px 8px; font-size:12px; width:100%;"
+                value="${escapeHtml(a.roleTag || "")}"
+                placeholder="身份定位 / 场景氛围标签（如：男主·青衫剑客 / 暴雨夜荒庙）"
+                onchange="saveAssetField(${a.id}, {roleTag: this.value})"
+              />
+            </div>
+            <div class="formGroup">
+              <label style="font-size:11px; color:var(--amber-gold);">
+                🔒 锁定外貌衣着 / 场景光影 / 道具特征描述（后续所有分镜将强制注入此描述）：
+              </label>
+              <textarea
+                class="promptTextarea"
+                style="min-height:66px; font-size:12px;"
+                placeholder="详细填写固定面部特征、发型发色、服装款式颜色材质，或场景的建筑陈设与主光源..."
+                onchange="saveAssetField(${a.id}, {visualPrompt: this.value})"
+              >${escapeHtml(a.visualPrompt || "")}</textarea>
+            </div>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+async function saveAssetField(assetId, payload) {
+  try {
+    await apiFetch(`/api/assets/${assetId}/update`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    flashSaveIndicator("✓ 设定已锁定保存");
+    await loadWorkspace(currentState.activeProjectId, currentState.activeEpisodeId);
+  } catch (err) {
+    showToast(`保存设定失败: ${err.message}`, "error");
+  }
+}
+
+async function createNewAssetItem(assetType = "character") {
+  if (!currentState.activeProjectId) return;
+  const defaultName =
+    assetType === "character" ? "新角色" : assetType === "scene" ? "新场景" : "新道具";
+  try {
+    const res = await apiFetch("/api/assets/create", {
+      method: "POST",
+      body: JSON.stringify({
+        projectId: currentState.activeProjectId,
+        assetType,
+        name: defaultName,
+        eraTag: "默认时期",
+        roleTag: assetType === "character" ? "核心角色" : assetType === "scene" ? "核心场景" : "关键道具",
+        visualPrompt: "",
+      }),
+    });
+    await loadWorkspace(currentState.activeProjectId, currentState.activeEpisodeId);
+    openAssetBibleModal(res.assetId);
+    showToast(`已新增${defaultName}，请填写外貌/环境描述`, "success");
+  } catch (err) {
+    showToast(`新增设定失败: ${err.message}`, "error");
+  }
+}
+
+async function deleteAssetItem(assetId) {
+  try {
+    await apiFetch(`/api/assets/${assetId}/delete`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    showToast("已删除该项设定", "info");
+    await loadWorkspace(currentState.activeProjectId, currentState.activeEpisodeId);
+  } catch (err) {
+    showToast(`删除设定失败: ${err.message}`, "error");
+  }
+}
+
+async function triggerAssetImage(assetId) {
+  try {
+    await apiFetch(`/api/assets/${assetId}/generateImage`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    showToast("已加入定妆设定图生成队列，完成后将自动显示！", "info");
+    await loadWorkspace(currentState.activeProjectId, currentState.activeEpisodeId);
+  } catch (err) {
+    showToast(`提交定妆图生成失败: ${err.message}`, "error");
+  }
+}
+
+async function batchGenerateAllAssetImages() {
+  if (!currentState.activeProjectId) return;
+  try {
+    const res = await apiFetch(`/api/projects/${currentState.activeProjectId}/batchAssetImages`, {
+      method: "POST",
+      body: JSON.stringify({ onlyMissing: true }),
+    });
+    if (res.count === 0) {
+      showToast("所有角色、场景与道具都已有定妆设定图！如需重画可点击单个卡片上的「重画定妆图」", "success");
+    } else {
+      showToast(`已将 ${res.count} 项角色/场景/道具加入定妆图生成队列！`, "success");
+    }
+    await loadWorkspace(currentState.activeProjectId, currentState.activeEpisodeId);
+  } catch (err) {
+    showToast(`批量生成定妆图失败: ${err.message}`, "error");
+  }
+}
+
+async function confirmAssetsAndGoToBreakdown() {
+  closeModal("assetBibleModal");
+  openScriptModal(false);
+  await submitScriptBreakdown(false);
+}
+
+async function triggerDirectBreakdownFromMain() {
+  openScriptModal(false);
+  const scriptVal = (document.getElementById("scriptInputArea").value || "").trim();
+  const novelVal = (document.getElementById("novelInputArea").value || "").trim();
+  if (scriptVal || novelVal) {
+    await submitScriptBreakdown(false);
   }
 }
 

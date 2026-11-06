@@ -549,3 +549,113 @@ def breakScriptIntoKeyframedShots(scriptText, projectAssets, visualStyle, llmCon
             shotNum += 1
 
     return compiledShots
+
+
+def compileAssetSheetPrompt(assetRow, visualStyle="3D国漫电影级写实质感 (High-end Chinese 3D CG & live-action realism)"):
+    """
+    为角色、场景、道具生成标准定妆照 / 设定图的提示词：
+    - 角色：正面半身与全身定妆照，清晰面部五官、固定发型、服装材质与配饰细节，纯净光影；
+    - 场景：电影级空镜环境设定图（无人干扰），固定建筑布局、主光源方向与色彩基调；
+    - 道具：高精度居中特写设定图，清晰展示结构、材质纹理与年代痕迹。
+    """
+    aType = assetRow.get("assetType") or "character"
+    name = assetRow.get("name") or "未命名资产"
+    era = assetRow.get("eraTag") or ""
+    roleTag = assetRow.get("roleTag") or ""
+    desc = assetRow.get("visualPrompt") or name
+
+    if aType == "character":
+        return (
+            f"Character design reference portrait, [{visualStyle}], "
+            f"Character: {name} ({era} {roleTag}). "
+            f"Locked Appearance & Costume DNA: {desc}. "
+            "Medium close-up portrait showing clear facial features, consistent hairstyle, "
+            "exact clothing texture and color palette, cinematic rim lighting, ultra-detailed skin and fabric, no text, no watermark."
+        )
+    if aType == "scene":
+        return (
+            f"Cinematic environment concept art, empty establishing wide shot (no people), [{visualStyle}], "
+            f"Location: {name} ({era}). "
+            f"Locked Architecture & Lighting DNA: {desc}. "
+            "Clear spatial depth, consistent light source direction, atmospheric volumetric lighting, 8k resolution, no text."
+        )
+    return (
+        f"Hero prop studio close-up reference, [{visualStyle}], "
+        f"Prop: {name} ({era}). "
+        f"Locked Material & Structure DNA: {desc}. "
+        "Centered macro product shot on dark neutral background, intricate craftsmanship, clear material texture, no text."
+    )
+
+
+def compileLockedKeyframePrompt(shotRow, assets, visualStyle, frameRole="first"):
+    """
+    在生成分镜首帧 / 尾帧关键帧时，强制从当前项目的设定资产库 (assets) 中读取最新锁定的
+    角色外貌 DNA、场景光影 DNA 与道具材质 DNA，拼合到提示词最前端的高权重区，
+    彻底防止前后镜头人物变脸、换衣服或场景陈设突变。
+    """
+    assetMap = {str(a.get("name", "")).lstrip("@").strip(): a for a in (assets or [])}
+    rawRefs = shotRow.get("references")
+    if rawRefs is None:
+        try:
+            rawRefs = json.loads(shotRow.get("referenceAssetsJson") or "[]")
+        except Exception:
+            rawRefs = []
+
+    rawPrompt = (
+        shotRow.get("lastFramePrompt")
+        if frameRole == "last"
+        else shotRow.get("firstFramePrompt")
+    ) or ""
+
+    # 匹配本镜引用的资产（若 references 为空则自动扫描标题、意图与提示词中提及的资产名）
+    matchedChars = []
+    matchedScenes = []
+    matchedProps = []
+    seenNames = set()
+
+    for r in rawRefs:
+        if not isinstance(r, dict):
+            continue
+        aName = str(r.get("asset", "")).lstrip("@").strip()
+        if not aName or aName in seenNames:
+            continue
+        seenNames.add(aName)
+        aObj = assetMap.get(aName)
+        if aObj:
+            if aObj.get("assetType") == "character":
+                matchedChars.append(aObj)
+            elif aObj.get("assetType") == "scene":
+                matchedScenes.append(aObj)
+            else:
+                matchedProps.append(aObj)
+
+    searchText = f"{shotRow.get('title', '')} {shotRow.get('intentText', '')} {rawPrompt}"
+    for aName, aObj in assetMap.items():
+        if aName and aName not in seenNames and aName in searchText:
+            seenNames.add(aName)
+            if aObj.get("assetType") == "character":
+                matchedChars.append(aObj)
+            elif aObj.get("assetType") == "scene":
+                matchedScenes.append(aObj)
+            else:
+                matchedProps.append(aObj)
+
+    dnaBlocks = [f"[GLOBAL STYLE]: {visualStyle}."]
+    if matchedScenes:
+        scStr = "; ".join(f"{s['name']} ({s.get('visualPrompt') or s['name']})" for s in matchedScenes)
+        dnaBlocks.append(f"[LOCKED SCENE ENVIRONMENT]: {scStr}.")
+    if matchedChars:
+        chStr = "; ".join(
+            f"{c['name']} MUST KEEP EXACT APPEARANCE & COSTUME ({c.get('visualPrompt') or c['name']})"
+            for c in matchedChars
+        )
+        dnaBlocks.append(f"[LOCKED CHARACTER IDENTITY]: {chStr}.")
+    if matchedProps:
+        prStr = "; ".join(f"{p['name']} ({p.get('visualPrompt') or p['name']})" for p in matchedProps)
+        dnaBlocks.append(f"[LOCKED PROP DESIGN]: {prStr}.")
+
+    if shotRow.get("axisRule"):
+        dnaBlocks.append(f"[180-DEGREE AXIS]: {shotRow.get('axisRule')}.")
+
+    lockedPrefix = " ".join(dnaBlocks)
+    return f"{lockedPrefix} [SHOT KEYFRAME ({frameRole.upper()})]: {rawPrompt}"
