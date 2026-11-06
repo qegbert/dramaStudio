@@ -22,17 +22,19 @@ import urllib.error
 def compileFl2vaVideoPrompt(shotDict, hasLastFrame=True):
     """
     将单个结构化镜头编译为 MiniMax-H3 ImageToVideo (FL2VA 首尾帧模型) 原生音画提示词。
-    当同时提供 first_frame 与 last_frame 时，模型在潜空间首尾两端被严格锚定，
-    中间帧专注于演绎从 firstFramePrompt 到 lastFramePrompt 的物理运动弧线与口型对白。
+    重要铁律：
+    1. 除 <d>[Chinese] ...</d> 真实角色对白外，所有画面、动作弧线 (actionArc)、轴线 (axisRule) 必须 100% 使用纯英文，
+       彻底剥离括号内的中文动作说明，防止 Qwen3-VL-32B 音画模型将中文舞台提示词当成旁白朗读出来！
+    2. 无台词镜头强制声明零人声、纯环境拟音音效。
     """
     duration = float(shotDict.get("durationSec") or 5.0)
-    framing = str(shotDict.get("cameraFraming") or "Medium shot").strip()
-    movement = str(shotDict.get("cameraMovement") or "Steady camera").strip()
-    firstState = str(shotDict.get("firstFramePrompt") or "").strip()
-    actionArc = str(shotDict.get("actionArcPrompt") or "").strip()
-    lastState = str(shotDict.get("lastFramePrompt") or "").strip()
-    axisRule = str(shotDict.get("axisRule") or "Preserve left-to-right spatial axis.").strip()
-    soundscape = str(shotDict.get("soundscapePrompt") or "Realistic room tone and physical movement Foley.").strip()
+    framing = extractPureEnglishVisual(shotDict.get("cameraFraming") or "Medium shot") or "Medium shot"
+    movement = extractPureEnglishVisual(shotDict.get("cameraMovement") or "Steady camera") or "Steady camera"
+    firstState = extractPureEnglishVisual(shotDict.get("firstFramePrompt") or "")
+    actionArc = extractPureEnglishVisual(shotDict.get("actionArcPrompt") or "")
+    lastState = extractPureEnglishVisual(shotDict.get("lastFramePrompt") or "")
+    axisRule = extractPureEnglishVisual(shotDict.get("axisRule") or "") or "Preserve consistent left-to-right spatial axis."
+    soundscape = extractPureEnglishVisual(shotDict.get("soundscapePrompt") or "") or "Realistic room tone and physical movement Foley."
 
     try:
         dialogues = json.loads(shotDict.get("dialogueJson") or "[]")
@@ -48,7 +50,7 @@ def compileFl2vaVideoPrompt(shotDict, hasLastFrame=True):
     else:
         anchorHeader = (
             "Keyframe-driven generation (I2V): "
-            "At 0.0s, the shot opens strictly from the provided first_frame keyframe, preserving character facial identity, costume, and spatial layout throughout."
+            "At 0.0s, the shot opens strictly from the provided first_frame keyframe, preserving character facial identity, costume, tool proportions, and spatial layout throughout."
         )
 
     timelineLines = [
@@ -56,19 +58,21 @@ def compileFl2vaVideoPrompt(shotDict, hasLastFrame=True):
         f"[0.0s - Opening Anchor] {firstState}",
         f"[Motion Progression] {actionArc}",
     ]
-    if hasLastFrame and lastState:
-        timelineLines.append(f"[{duration:g}s - Ending Payoff Anchor] {lastState}")
+    if lastState:
+        timelineLines.append(f"[{duration:g}s - Target Ending Pose] {lastState}")
 
     speakerMap = {}
+    validDialogueCount = 0
     for line in dialogues:
         if not isinstance(line, dict) or not str(line.get("text") or "").strip():
             continue
+        validDialogueCount += 1
         speaker = str(line.get("speaker") or "Protagonist").strip()
-        speakerLabel = str(line.get("speaker_label") or speaker).strip()
+        speakerLabel = extractPureEnglishVisual(line.get("speaker_label") or "") or f"Speaker {validDialogueCount}"
         sid = speakerMap.setdefault(speaker, len(speakerMap) + 1)
         kind = str(line.get("kind") or "onscreen").strip()
         lang = str(line.get("language") or "Chinese").strip()
-        delivery = str(line.get("delivery") or "Natural restrained voice").strip()
+        delivery = extractPureEnglishVisual(line.get("delivery") or "") or "Natural restrained voice"
         text = str(line.get("text") or "").strip()
 
         if kind == "internal":
@@ -87,28 +91,30 @@ def compileFl2vaVideoPrompt(shotDict, hasLastFrame=True):
                 f"<d>[{lang}] {text}</d> Accurate lip-sync and natural facial muscle movement."
             )
 
-    if not dialogues:
-        timelineLines.append("Audio (Speech): No spoken dialogue, narration, or intelligible speech.")
+    if validDialogueCount == 0:
+        timelineLines.append(
+            "Audio (Speech): Strictly silent voice track, ZERO human speech, NO voiceover narration, NO talking, NO murmuring. Pure mechanical and environmental Foley sound effects only."
+        )
 
     timelineLines.append(f"Audio (Soundscape & Foley): {soundscape}")
     timelineLines.append(
-        "Visual Quality Constraints: Single continuous shot, no hard cuts inside the clip, no subtitle bars, no watermark, consistent character proportions and hands."
+        "Visual Quality Constraints: Single continuous shot, no hard cuts inside the clip, no morphing jumps, no text or Chinese characters anywhere, no watermark, consistent character proportions and hands."
     )
 
     return anchorHeader + "\n\n" + "\n".join(timelineLines)
 
 
 def compileWan22VideoPrompt(shotDict):
-    """编译适用于 Wan 2.2 14B MoE 高低噪双专家模型的电影级视觉提示词"""
-    framing = str(shotDict.get("cameraFraming") or "Medium shot").strip()
-    movement = str(shotDict.get("cameraMovement") or "Steady camera").strip()
-    actionArc = str(shotDict.get("actionArcPrompt") or "").strip()
-    lastState = str(shotDict.get("lastFramePrompt") or "").strip()
-    axisRule = str(shotDict.get("axisRule") or "").strip()
+    """编译适用于 Wan 2.2 14B MoE 高低噪双专家模型的电影级纯英文视觉提示词"""
+    framing = extractPureEnglishVisual(shotDict.get("cameraFraming") or "Medium shot") or "Medium shot"
+    movement = extractPureEnglishVisual(shotDict.get("cameraMovement") or "Steady camera") or "Steady camera"
+    actionArc = extractPureEnglishVisual(shotDict.get("actionArcPrompt") or "")
+    lastState = extractPureEnglishVisual(shotDict.get("lastFramePrompt") or "")
+    axisRule = extractPureEnglishVisual(shotDict.get("axisRule") or "")
     return (
         f"Cinematic film shot, {framing}, {movement}. "
-        f"Action progression: {actionArc} "
-        f"Ending state: {lastState} "
+        f"Action progression: {actionArc}. "
+        f"Ending state: {lastState}. "
         f"{axisRule} "
         "High-end 3D animation and realistic film lighting, natural fluid limb motion, consistent facial identity, 8k sharp details, no text, no subtitles."
     )

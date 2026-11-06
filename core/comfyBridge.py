@@ -168,19 +168,29 @@ def uploadImageToComfy(imagePath, comfyEndpoint):
         raise RuntimeError(f"上传关键帧至云端超时或失败: {lastErr}")
 
 
-def buildFlux3KeyframeWorkflow(promptText, width=1472, height=832, steps=16, seed=None, referenceUploadedNames=None):
+def buildFlux3KeyframeWorkflow(
+    promptText,
+    width=1472,
+    height=832,
+    steps=16,
+    seed=None,
+    referenceUploadedNames=None,
+    initImageUploadedName=None,
+    denoise=1.0,
+):
     """
     构建无影云端 Flux3-Klein 高清关键帧生成工作流：
-    1. 在负向条件中强制屏蔽中文文字、标牌、水印、幼童化与现代穿帮元素；
-    2. 支持挂载 1~3 张 ReferenceLatent 潜空间参考图：
+    1. 在负向条件中强制屏蔽中文文字、标牌、刺绣字、拉链、水印、幼童化与现代穿帮元素；
+    2. 支持挂载 1~2 张 ReferenceLatent 潜空间参考图：
        - 生成首帧时：挂载本镜出场角色的定妆设定图，100% 锁定演员面部五官、发型与服装；
-       - 生成尾帧时：挂载本镜刚生成的首帧图像，100% 锁定同一机位、同一背景陈设与人物基础姿态，仅演进动作结果。
+       - 生成尾帧时：挂载本镜刚生成的首帧图像，并支持将首帧作为初始潜空间基底，100% 锁定同一机位、同一背景陈设与人物基础姿态。
     """
     if not seed or seed < 0:
         seed = random.randint(1, 2147483647)
     negText = (
         "text, Chinese characters, kanji, hanzi, signboard, nameplate, helmet label, plaque text, "
-        "watermark, subtitle, logo, child, kid, toddler, modern rubber boots, modern steel valve wheel"
+        "embroidered letters, chest badge, metal zipper, modern zipper, watermark, subtitle, logo, "
+        "child, kid, toddler, modern rubber boots, modern steel valve wheel"
     )
     wf = {
         "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "flux3_image_klein_sd_bf16.safetensors", "weight_dtype": "default"}},
@@ -188,8 +198,13 @@ def buildFlux3KeyframeWorkflow(promptText, width=1472, height=832, steps=16, see
         "3": {"class_type": "VAELoader", "inputs": {"vae_name": "flux2-vae.safetensors"}},
         "4": {"class_type": "CLIPTextEncode", "inputs": {"text": promptText, "clip": ["2", 0]}},
         "5": {"class_type": "CLIPTextEncode", "inputs": {"text": negText, "clip": ["2", 0]}},
-        "6": {"class_type": "EmptyLatentImage", "inputs": {"width": width, "height": height, "batch_size": 1}},
     }
+
+    if initImageUploadedName:
+        wf["30"] = {"class_type": "LoadImage", "inputs": {"image": initImageUploadedName}}
+        wf["6"] = {"class_type": "VAEEncode", "inputs": {"pixels": ["30", 0], "vae": ["3", 0]}}
+    else:
+        wf["6"] = {"class_type": "EmptyLatentImage", "inputs": {"width": width, "height": height, "batch_size": 1}}
 
     posCondOut = ["4", 0]
     refList = [r for r in (referenceUploadedNames or []) if r]
@@ -210,7 +225,7 @@ def buildFlux3KeyframeWorkflow(promptText, width=1472, height=832, steps=16, see
             "cfg": 1.0,
             "sampler_name": "euler",
             "scheduler": "simple",
-            "denoise": 1.0,
+            "denoise": float(denoise),
             "model": ["1", 0],
             "positive": posCondOut,
             "negative": ["5", 0],
@@ -647,7 +662,11 @@ def _collectShotCharacterRefUploads(shotRow, projectAssets, comfyEndpoint):
         aName = str(r.get("asset", "")).lstrip("@").strip()
         aObj = assetMap.get(aName)
         if aObj and aObj.get("assetType") == "character" and aObj.get("imageUrl"):
-            localPath = resolveMediaUrlToPath(aObj["imageUrl"])
+            imgUrl = str(aObj["imageUrl"])
+            # 跳过旧版遗留的带文字乱码定妆图 (_1793949)
+            if "_1793949" in imgUrl:
+                continue
+            localPath = resolveMediaUrlToPath(imgUrl)
             if localPath and localPath.exists():
                 try:
                     upName = uploadImageToComfy(localPath, comfyEndpoint)
@@ -848,11 +867,16 @@ def enqueueShotVideoTask(shotId, engineOverride=None):
                 # 2. 确保首帧（以及动作推进镜的尾帧）就绪，并强制注入锁定的角色/场景/道具 DNA 与 ReferenceLatent
                 firstUrl = shotRow.get("firstFrameUrl") or ""
                 lastUrl = shotRow.get("lastFrameUrl") or ""
+                # 自动识别并淘汰旧版遗留的带中文标牌乱码关键帧 (时间戳早于 1793954000)
+                if firstUrl and any(oldTag in firstUrl for oldTag in ("_1793949", "_1793950")):
+                    firstUrl = ""
+                    lastUrl = ""
                 charRefUploads = _collectShotCharacterRefUploads(shotRow, projectAssets, comfyStatus["endpoint"]) if comfyStatus["online"] else []
+                sharedKfSeed = random.randint(1, 2147483647)
                 if not firstUrl:
                     if comfyStatus["online"]:
                         lockedFirst = compileLockedKeyframePrompt(shotRow, projectAssets, projRow.get("visualStyle", ""), frameRole="first")
-                        wfFirst = buildFlux3KeyframeWorkflow(lockedFirst, width=vWidth, height=vHeight, referenceUploadedNames=charRefUploads)
+                        wfFirst = buildFlux3KeyframeWorkflow(lockedFirst, width=vWidth, height=vHeight, seed=sharedKfSeed, referenceUploadedNames=charRefUploads)
                         _, firstUrl, _ = _submitAndPollComfyWorkflow(wfFirst, comfyStatus["endpoint"], expectedType="image")
                     else:
                         firstUrl = _generateLocalFallbackKeyframe(shotRow, "first", width=vWidth, height=vHeight)
@@ -869,7 +893,7 @@ def enqueueShotVideoTask(shotId, engineOverride=None):
                                 lastRefs = charRefUploads
                         else:
                             lastRefs = charRefUploads
-                        wfLast = buildFlux3KeyframeWorkflow(lockedLast, width=vWidth, height=vHeight, referenceUploadedNames=lastRefs)
+                        wfLast = buildFlux3KeyframeWorkflow(lockedLast, width=vWidth, height=vHeight, seed=sharedKfSeed, referenceUploadedNames=lastRefs)
                         _, lastUrl, _ = _submitAndPollComfyWorkflow(wfLast, comfyStatus["endpoint"], expectedType="image")
                     else:
                         lastUrl = _generateLocalFallbackKeyframe(shotRow, "last", width=vWidth, height=vHeight)
@@ -895,7 +919,14 @@ def enqueueShotVideoTask(shotId, engineOverride=None):
 
                 if comfyStatus["online"]:
                     upFirst = uploadImageToComfy(firstPath, comfyStatus["endpoint"])
-                    upLast = uploadImageToComfy(lastPath, comfyStatus["endpoint"]) if (lastPath and lastPath.exists() and shotRow.get("shotCategory") == "action_fl2va") else None
+                    # 默认以首帧潜空间为 100% 物理起点，通过 Target Ending Pose 提示词连续驱动动作演进至尾帧落点，
+                    # 彻底消除两张独立静态图微差引发的第 0.5 秒火光闪变与道具尺寸跳变
+                    useStrictDual = str(getSettingValue("strictDualFrameAnchor", "0")) == "1"
+                    upLast = (
+                        uploadImageToComfy(lastPath, comfyStatus["endpoint"])
+                        if (useStrictDual and lastPath and lastPath.exists() and shotRow.get("shotCategory") == "action_fl2va")
+                        else None
+                    )
 
                     with closing(getDbConnection()) as conn:
                         conn.execute(
