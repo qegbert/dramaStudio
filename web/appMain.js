@@ -94,13 +94,38 @@ function initDialogLightDismissFallback() {
   }
 }
 
-function openLightbox(imageUrl, captionText = "画面细节审片") {
+let currentLightboxRegenMeta = null;
+
+function withCacheBust(url, updatedAt = 0) {
+  if (!url) return "";
+  const ver = updatedAt ? Math.floor(Number(updatedAt) * 1000) : Date.now();
+  const sep = url.includes("?") ? "&" : "?";
+  return `${url}${sep}v=${ver}`;
+}
+
+function openLightbox(imageUrl, captionText = "画面细节审片", regenMeta = null) {
   if (!imageUrl) return;
+  currentLightboxRegenMeta = regenMeta;
   const img = document.getElementById("lightboxImage");
   const cap = document.getElementById("lightboxCaption");
+  const regenBtn = document.getElementById("lightboxRegenBtn");
   if (img) img.src = imageUrl;
   if (cap) cap.textContent = captionText;
+  if (regenBtn) {
+    regenBtn.style.display = regenMeta ? "inline-flex" : "none";
+  }
   openDialog("lightboxModal");
+}
+
+async function regenerateFromLightbox() {
+  if (!currentLightboxRegenMeta) return;
+  const meta = currentLightboxRegenMeta;
+  closeModal("lightboxModal");
+  if (meta.type === "asset" && meta.id) {
+    await triggerAssetImage(meta.id);
+  } else if (meta.type === "shot" && meta.id) {
+    await triggerKeyframes(meta.id, meta.role || "both");
+  }
 }
 
 async function apiFetch(url, options = {}) {
@@ -343,6 +368,22 @@ function setAssetFilter(filterType) {
   }
 }
 
+function getRunningAssetTaskMap() {
+  const map = {};
+  const tasks = (currentState.workspace && currentState.workspace.tasks) || [];
+  tasks.forEach((t) => {
+    if (t.taskType === "asset_image" && (t.status === "running" || t.status === "queued")) {
+      try {
+        const meta = JSON.parse(t.auditJson || "{}");
+        if (meta && meta.assetId) {
+          map[Number(meta.assetId)] = t;
+        }
+      } catch (_) {}
+    }
+  });
+  return map;
+}
+
 function renderAssetList(assets) {
   const filtered =
     currentState.assetFilter === "all"
@@ -359,12 +400,17 @@ function renderAssetList(assets) {
     `;
     return;
   }
+  const runningAssetMap = getRunningAssetTaskMap();
   container.innerHTML = filtered
     .map((a) => {
       const typeCn =
         a.assetType === "character" ? "角色" : a.assetType === "scene" ? "场景" : "道具";
-      const thumbHtml = a.imageUrl
-        ? `<img class="assetThumb" src="${escapeHtml(a.imageUrl)}" alt="${escapeHtml(a.name)}" onclick="openLightbox('${escapeHtml(a.imageUrl)}', '@${escapeHtml(a.name)} · 锁定定妆设定图')" style="cursor:zoom-in;" title="点击放大查看定妆照" />`
+      const isRunning = Boolean(runningAssetMap[a.id]);
+      const imgUrl = withCacheBust(a.imageUrl, a.updatedAt);
+      const thumbHtml = isRunning
+        ? `<div class="assetThumb" style="display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--amber-gold);text-align:center;line-height:1.2;">⏳正在<br/>重画中</div>`
+        : a.imageUrl
+        ? `<img class="assetThumb" src="${escapeHtml(imgUrl)}" alt="${escapeHtml(a.name)}" onclick="openLightbox('${escapeHtml(imgUrl)}', '@${escapeHtml(a.name)} · 锁定定妆设定图', {type:'asset', id:${a.id}})" style="cursor:zoom-in;" title="点击放大查看定妆照（灯箱内可重新生成）" />`
         : `<div class="assetThumb" onclick="triggerAssetImage(${a.id})" style="display:flex;align-items:center;justify-content:center;font-size:10.5px;color:var(--amber-gold);cursor:pointer;text-align:center;line-height:1.2;" title="点击生成定妆设定图">🎨生成<br/>定妆图</div>`;
       const eraBadge = a.eraTag
         ? `<span class="eraBadge">${escapeHtml(a.eraTag)}</span>`
@@ -376,7 +422,9 @@ function renderAssetList(assets) {
             <div style="display:flex; justify-content:space-between; align-items:center; gap:4px;">
               <div class="assetName">@${escapeHtml(a.name)} ${eraBadge}</div>
               <div style="display:flex; gap:3px; flex-shrink:0;">
-                <button class="btn btnSmall" style="padding:1px 5px; font-size:10px;" onclick="triggerAssetImage(${a.id})" title="生成或重绘定妆参考图">🎨</button>
+                <button class="btn btnSmall btnCyan" style="padding:1px 6px; font-size:10px;" ${isRunning ? "disabled" : ""} onclick="triggerAssetImage(${a.id})" title="${a.imageUrl ? "重新生成此定妆设定图" : "生成定妆设定图"}">
+                  ${isRunning ? "⏳" : a.imageUrl ? "🔄重画" : "🎨出图"}
+                </button>
                 <button class="btn btnSmall" style="padding:1px 5px; font-size:10px;" onclick="openAssetBibleModal(${a.id})" title="编辑外貌衣着或场景设定">✏️</button>
               </div>
             </div>
@@ -636,12 +684,15 @@ function renderShotCards(shots, tasks = [], assets = []) {
         `;
       }
 
+      const firstUrlCacheBusted = withCacheBust(s.firstFrameUrl, s.updatedAt);
+      const lastUrlCacheBusted = withCacheBust(s.lastFrameUrl, s.updatedAt);
+
       const firstImgHtml = s.firstFrameUrl
-        ? `<img src="${escapeHtml(s.firstFrameUrl)}" alt="起点画面" onclick="openLightbox('${escapeHtml(s.firstFrameUrl)}', '第 ${s.shotNumber} 镜 [起点画面] · ${escapeHtml(s.title)}')" title="点击放大查看起点画面" />`
+        ? `<img src="${escapeHtml(firstUrlCacheBusted)}" alt="起点画面" onclick="openLightbox('${escapeHtml(firstUrlCacheBusted)}', '第 ${s.shotNumber} 镜 [起点画面] · ${escapeHtml(s.title)}', {type:'shot', id:${s.id}, role:'first'})" title="点击放大查看起点画面（灯箱内可重新生成）" />`
         : `<div class="emptyViewportHint">尚未生成起点画面<br/>点击右上角「生成画面」</div>`;
 
       const lastImgHtml = s.lastFrameUrl
-        ? `<img src="${escapeHtml(s.lastFrameUrl)}" alt="结束画面" onclick="openLightbox('${escapeHtml(s.lastFrameUrl)}', '第 ${s.shotNumber} 镜 [结果画面] · ${escapeHtml(s.title)}')" title="点击放大查看结果画面" />`
+        ? `<img src="${escapeHtml(lastUrlCacheBusted)}" alt="结束画面" onclick="openLightbox('${escapeHtml(lastUrlCacheBusted)}', '第 ${s.shotNumber} 镜 [结果画面] · ${escapeHtml(s.title)}', {type:'shot', id:${s.id}, role:'last'})" title="点击放大查看结果画面（灯箱内可重新生成）" />`
         : `<div class="emptyViewportHint">${
             isAction
               ? "尚未生成动作结果画面<br/>有结果图可防止动作演一半卡住"
@@ -726,8 +777,8 @@ function renderShotCards(shots, tasks = [], assets = []) {
             </div>
             <div style="display:flex; align-items:center; gap:8px;">
               ${statusBadge}
-              <button class="btn btnSmall btnCyan" ${isRunning ? "disabled" : ""} onclick="triggerKeyframes(${s.id}, 'both')">
-                🎨 ${s.firstFrameUrl ? "重画本镜首尾图" : "① 生成本镜画面"}
+              <button class="btn btnSmall btnCyan" ${isRunning ? "disabled" : ""} onclick="triggerKeyframes(${s.id}, 'both')" title="${s.firstFrameUrl ? "不满意当前画面？点击立即重新生成本镜图片" : "生成本镜画面"}">
+                ${s.firstFrameUrl ? "🔄 重新生成本镜画面" : "🎨 ① 生成本镜画面"}
               </button>
               <button class="btn btnSmall btnPrimary" ${isRunning ? "disabled" : ""} onclick="triggerShotVideo(${s.id})">
                 🎬 ${isRunning ? "正在排队生成..." : s.videoUrl ? "重新生成视频" : "② 生成本镜视频"}
@@ -743,13 +794,13 @@ function renderShotCards(shots, tasks = [], assets = []) {
             <div class="boardPanel">
               <div class="slotHeader">
                 <span>🖼️ 第一步：镜头画面（起点 ➔ 落点）</span>
-                <span style="font-size:11px; color:var(--text-muted);">点击图片可放大</span>
+                <span style="font-size:11px; color:var(--text-muted);">点击图片可放大或重生</span>
               </div>
               <div class="keyframePairGrid ${isAction ? "" : "singleMode"}">
                 <div class="keyframeBox">
                   <div class="keyframeRoleTag">
                     <span>起点画面 (0.0s)</span>
-                    <button class="btn btnSmall" style="padding:2px 6px; font-size:10.5px;" ${isRunning ? "disabled" : ""} onclick="triggerKeyframes(${s.id}, 'first')">重画起点</button>
+                    <button class="btn btnSmall" style="padding:2px 7px; font-size:10.5px;" ${isRunning ? "disabled" : ""} onclick="triggerKeyframes(${s.id}, 'first')" title="单独重新生成一张全新的起点画面">🔄 重新生成起点图</button>
                   </div>
                   <div class="mediaViewport">${firstImgHtml}</div>
                 </div>
@@ -759,7 +810,7 @@ function renderShotCards(shots, tasks = [], assets = []) {
                     <div class="keyframeBox">
                       <div class="keyframeRoleTag">
                         <span>动作结果画面 (${s.durationSec}s)</span>
-                        <button class="btn btnSmall" style="padding:2px 6px; font-size:10.5px;" ${isRunning ? "disabled" : ""} onclick="triggerKeyframes(${s.id}, 'last')">重画结果</button>
+                        <button class="btn btnSmall" style="padding:2px 7px; font-size:10.5px;" ${isRunning ? "disabled" : ""} onclick="triggerKeyframes(${s.id}, 'last')" title="单独重新生成一张全新的动作结果画面">🔄 重新生成结果图</button>
                       </div>
                       <div class="mediaViewport">${lastImgHtml}</div>
                     </div>
@@ -1016,15 +1067,22 @@ async function syncAllFrameLocks() {
   }
 }
 
-async function batchGenerateKeyframes(limit = 50) {
+async function batchGenerateKeyframes(limit = 100, onlyMissing = true) {
   if (!currentState.activeEpisodeId) return;
   try {
-    const res = await apiFetch(`/api/episodes/${currentState.activeEpisodeId}/batchKeyframes`, {
+    let res = await apiFetch(`/api/episodes/${currentState.activeEpisodeId}/batchKeyframes`, {
       method: "POST",
-      body: JSON.stringify({ limit, onlyMissing: true }),
+      body: JSON.stringify({ limit, onlyMissing }),
     });
-    if (res.count === 0) {
-      showToast("本集所有镜头的首尾画面都已经生成完毕啦！可以直接点「第 ③ 步」生成视频", "success");
+    if (res.count === 0 && onlyMissing) {
+      // 如果所有镜头都已有图，用户再次点击时自动转为重新生成全部画面
+      res = await apiFetch(`/api/episodes/${currentState.activeEpisodeId}/batchKeyframes`, {
+        method: "POST",
+        body: JSON.stringify({ limit, onlyMissing: false }),
+      });
+      showToast(`已将本集全部 ${res.count} 个镜头加入【重新生成画面】队列！`, "info");
+    } else if ( !onlyMissing ) {
+      showToast(`已将本集全部 ${res.count} 个镜头加入【重新生成画面】队列！`, "info");
     } else {
       showToast(`已将 ${res.count} 个缺失画面的镜头加入排队生成队列！`, "info");
     }
@@ -1373,20 +1431,25 @@ function renderAssetBibleModal() {
     return;
   }
 
+  const runningAssetMap = getRunningAssetTaskMap();
   grid.innerHTML = filtered
     .map((a) => {
       const typeLabel =
         a.assetType === "character" ? "👤 人物角色" : a.assetType === "scene" ? "🏞️ 场景环境" : "🔧 关键道具";
-      const thumbHtml = a.imageUrl
-        ? `<img src="${escapeHtml(a.imageUrl)}" alt="${escapeHtml(a.name)}" onclick="openLightbox('${escapeHtml(a.imageUrl)}', '@${escapeHtml(a.name)} · 定妆设定大图')" />`
+      const isRunning = Boolean(runningAssetMap[a.id]);
+      const imgUrl = withCacheBust(a.imageUrl, a.updatedAt);
+      const thumbHtml = isRunning
+        ? `<div class="emptyViewportHint" style="font-size:11.5px; color:var(--amber-gold);">⏳ 正在生成新定妆图...<br/>请稍候</div>`
+        : a.imageUrl
+        ? `<img src="${escapeHtml(imgUrl)}" alt="${escapeHtml(a.name)}" onclick="openLightbox('${escapeHtml(imgUrl)}', '@${escapeHtml(a.name)} · 定妆设定大图', {type:'asset', id:${a.id}})" title="点击放大查看定妆图（灯箱内可重新生成）" />`
         : `<div class="emptyViewportHint" style="font-size:11px;">尚未生成定妆图<br/>点击下方按钮生成</div>`;
 
       return `
         <div class="assetBibleCard" id="bible-card-${a.id}">
           <div class="assetBibleThumbCol">
             <div class="assetBibleViewport">${thumbHtml}</div>
-            <button class="btn btnSmall btnCyan" style="width:100%;" onclick="triggerAssetImage(${a.id})">
-              🎨 ${a.imageUrl ? "重画定妆图" : "生成定妆图"}
+            <button class="btn btnSmall btnCyan" style="width:100%;" ${isRunning ? "disabled" : ""} onclick="triggerAssetImage(${a.id})">
+              ${isRunning ? "⏳ 正在重画中..." : a.imageUrl ? "🔄 重新生成定妆图" : "🎨 生成定妆图"}
             </button>
           </div>
           <div style="display:flex; flex-direction:column; gap:7px; min-width:0;">
@@ -1500,15 +1563,21 @@ async function triggerAssetImage(assetId) {
   }
 }
 
-async function batchGenerateAllAssetImages() {
+async function batchGenerateAllAssetImages(onlyMissing = true) {
   if (!currentState.activeProjectId) return;
   try {
-    const res = await apiFetch(`/api/projects/${currentState.activeProjectId}/batchAssetImages`, {
+    let res = await apiFetch(`/api/projects/${currentState.activeProjectId}/batchAssetImages`, {
       method: "POST",
-      body: JSON.stringify({ onlyMissing: true }),
+      body: JSON.stringify({ onlyMissing }),
     });
-    if (res.count === 0) {
-      showToast("所有角色、场景与道具都已有定妆设定图！如需重画可点击单个卡片上的「重画定妆图」", "success");
+    if (res.count === 0 && onlyMissing) {
+      res = await apiFetch(`/api/projects/${currentState.activeProjectId}/batchAssetImages`, {
+        method: "POST",
+        body: JSON.stringify({ onlyMissing: false }),
+      });
+      showToast(`已将全部 ${res.count} 项角色/场景/道具加入【重新生成定妆图】队列！`, "success");
+    } else if (!onlyMissing) {
+      showToast(`已将全部 ${res.count} 项角色/场景/道具加入【重新生成定妆图】队列！`, "success");
     } else {
       showToast(`已将 ${res.count} 项角色/场景/道具加入定妆图生成队列！`, "success");
     }

@@ -529,7 +529,7 @@ def breakScriptIntoKeyframedShots(scriptText, projectAssets, visualStyle, llmCon
                 "shotCategory": beat.get("beatCategory") or "action_fl2va",
                 "durationSec": float(beat.get("durationSec") or 5.0),
                 "continuityMode": beat.get("continuityMode") or ("establish" if shotNum == 1 else "same_scene_cut"),
-                "lockFromPrevEnd": int(beat.get("lockFromPrevEnd") or 0),
+                "lockFromPrevEnd": 0,
                 "axisRule": f"[{sceneCode} 轴线] {scene.get('spatialAxisCn') or axisEn}",
                 "intentText": f"【{sceneCode}·{eraTag}】{beat.get('intentCn') or ''}",
                 "cameraFraming": framing,

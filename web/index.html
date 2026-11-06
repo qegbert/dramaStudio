@@ -178,7 +178,10 @@
             oninput="onShotSearchInput(this.value)"
           />
         </div>
-        <div style="display:flex; gap:8px;">
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button class="btn btnSmall btnCyan" onclick="batchGenerateKeyframes(100, false)" title="将本集所有镜头的起点与结果画面全部重新生成一遍">
+            🔄 全部重新生成本集画面
+          </button>
           <button class="btn btnSmall" onclick="syncAllFrameLocks()" title="让所有开启了「承接上镜」的镜头自动复用上一镜的结尾画面">
             🔗 同步前后镜头衔接画面
           </button>
@@ -310,11 +313,12 @@
           <span class="statChip" data-modal-asset-filter="scene" onclick="setModalAssetFilter('scene')">🏞️ 场景环境 <strong id="modalAssetSceneCount" style="color:var(--cyan-monitor);">0</strong></span>
           <span class="statChip" data-modal-asset-filter="prop" onclick="setModalAssetFilter('prop')">🔧 关键道具 <strong id="modalAssetPropCount" style="color:var(--emerald-ok);">0</strong></span>
         </div>
-        <div style="display:flex; gap:8px;">
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
           <button class="btn btnSmall" onclick="createNewAssetItem('character')">➕ 新增角色</button>
           <button class="btn btnSmall" onclick="createNewAssetItem('scene')">➕ 新增场景</button>
           <button class="btn btnSmall" onclick="createNewAssetItem('prop')">➕ 新增道具</button>
-          <button class="btn btnSmall btnCyan" onclick="batchGenerateAllAssetImages()">🎨 一键生成全部缺失定妆图/设定图</button>
+          <button class="btn btnSmall btnCyan" onclick="batchGenerateAllAssetImages(true)">🎨 一键生成缺失定妆图</button>
+          <button class="btn btnSmall" onclick="batchGenerateAllAssetImages(false)" title="将所有角色、场景、道具的定妆设定图全部重新生成一遍">🔄 全部重新生成定妆图</button>
         </div>
       </div>
 
@@ -426,7 +430,12 @@
     <div class="dialogInner" style="align-items:center;">
       <div class="sectionHeader" style="width:100%;">
         <span id="lightboxCaption" style="font-size:14px; font-weight:700; color:var(--amber-gold);">画面细节审片</span>
-        <button class="btn btnSmall" onclick="closeModal('lightboxModal')">✕ 关闭 (Esc)</button>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button id="lightboxRegenBtn" class="btn btnSmall btnCyan" style="display:none;" onclick="regenerateFromLightbox()">
+            🔄 不满意？立即重新生成此图
+          </button>
+          <button class="btn btnSmall" onclick="closeModal('lightboxModal')">✕ 关闭 (Esc)</button>
+        </div>
       </div>
       <img id="lightboxImage" src="" alt="高清预览" style="max-width:100%; max-height:74vh; border-radius:8px; border:1px solid var(--border-subtle); object-fit:contain;" />
     </div>

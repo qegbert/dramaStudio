@@ -477,14 +477,14 @@ class StudioRequestHandler(BaseHTTPRequestHandler):
                     conn.execute(f"UPDATE shots SET {setClause} WHERE id=?", list(fields.values()) + [shotId])
                     conn.commit()
 
-                syncEpisodeFrameLocks(shot["episodeId"])
+                syncEpisodeFrameLocks(shot["episodeId"], overwriteExisting=bool(body.get("lockFromPrevEnd")))
                 return self.sendJson({"ok": True})
 
             mGenKf = re.match(r"^/api/shots/(\d+)/generateKeyframes$", path)
             if mGenKf:
                 shotId = int(mGenKf.group(1))
                 frameRole = str(body.get("frameRole") or "both")
-                taskId = enqueueKeyframeTask(shotId, frameRole=frameRole)
+                taskId = enqueueKeyframeTask(shotId, frameRole=frameRole, forceRegenerate=True)
                 return self.sendJson({"ok": True, "taskId": taskId})
 
             mGenVid = re.match(r"^/api/shots/(\d+)/generateVideo$", path)
@@ -503,13 +503,13 @@ class StudioRequestHandler(BaseHTTPRequestHandler):
             mSyncLocks = re.match(r"^/api/episodes/(\d+)/syncFrameLocks$", path)
             if mSyncLocks:
                 episodeId = int(mSyncLocks.group(1))
-                synced = syncEpisodeFrameLocks(episodeId)
+                synced = syncEpisodeFrameLocks(episodeId, overwriteExisting=True)
                 return self.sendJson({"ok": True, "syncedCount": synced})
 
             mBatchKf = re.match(r"^/api/episodes/(\d+)/batchKeyframes$", path)
             if mBatchKf:
                 episodeId = int(mBatchKf.group(1))
-                limitCount = int(body.get("limit") or 50)
+                limitCount = int(body.get("limit") or 100)
                 onlyMissing = bool(body.get("onlyMissing", True))
                 with closing(getDbConnection()) as conn:
                     if onlyMissing:
@@ -526,7 +526,7 @@ class StudioRequestHandler(BaseHTTPRequestHandler):
                             "SELECT id FROM shots WHERE episodeId=? ORDER BY shotNumber ASC LIMIT ?",
                             (episodeId, limitCount),
                         ).fetchall()
-                taskIds = [enqueueKeyframeTask(r["id"], frameRole="both") for r in rows]
+                taskIds = [enqueueKeyframeTask(r["id"], frameRole="both", forceRegenerate=not onlyMissing) for r in rows]
                 return self.sendJson({"ok": True, "taskIds": taskIds, "count": len(taskIds)})
 
             mBatchVid = re.match(r"^/api/episodes/(\d+)/batchVideos$", path)

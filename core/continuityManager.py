@@ -49,11 +49,12 @@ def resolveMediaUrlToPath(mediaUrl):
     return None
 
 
-def syncEpisodeFrameLocks(episodeId):
+def syncEpisodeFrameLocks(episodeId, overwriteExisting=False):
     """
     扫描指定剧集的所有镜头：
-    凡是开启了 lockFromPrevEnd=1（或 continuityMode == 'continue_action'）的镜头，
-    若前一镜头已有高清尾帧 (lastFrameUrl) 或首帧 (firstFrameUrl)，则自动无损同步为当前镜头的首帧！
+    凡是开启了 lockFromPrevEnd=1 的镜头，
+    若前一镜头已有高清尾帧 (lastFrameUrl) 或首帧 (firstFrameUrl)，
+    且当前镜头尚未生成首帧（或用户显式点击了 overwriteExisting=True 强制同步），则无损同步为当前镜头的首帧。
     返回本次成功同步的镜头数量。
     """
     syncedCount = 0
@@ -68,7 +69,8 @@ def syncEpisodeFrameLocks(episodeId):
         for shot in shots:
             if prevShot is not None and int(shot["lockFromPrevEnd"] or 0) == 1:
                 donorUrl = prevShot["lastFrameUrl"] or prevShot["firstFrameUrl"]
-                if donorUrl and shot["firstFrameUrl"] != donorUrl:
+                currentFirst = shot["firstFrameUrl"] or ""
+                if donorUrl and (overwriteExisting or not currentFirst) and currentFirst != donorUrl:
                     newStatus = shot["status"]
                     if newStatus == "planned":
                         newStatus = "keyframes_ready"

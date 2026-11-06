@@ -552,10 +552,18 @@ def enqueueAssetImageTask(assetId):
         epId = ep["id"] if ep else 0
         conn.execute(
             """
-            INSERT INTO renderTasks (id, projectId, episodeId, shotId, taskType, engineName, status, phaseText, createdAt, updatedAt)
-            VALUES (?, ?, ?, 0, 'asset_image', 'flux3_klein', 'running', ?, ?, ?)
+            INSERT INTO renderTasks (id, projectId, episodeId, shotId, taskType, engineName, status, phaseText, auditJson, createdAt, updatedAt)
+            VALUES (?, ?, ?, 0, 'asset_image', 'flux3_klein', 'running', ?, ?, ?, ?)
             """,
-            (taskId, asset["projectId"], epId, f"正在排队生成 @{asset['name']} 定妆设定图...", now, now),
+            (
+                taskId,
+                asset["projectId"],
+                epId,
+                f"正在排队生成 @{asset['name']} 定妆设定图...",
+                json.dumps({"assetId": assetId, "assetName": asset["name"]}, ensure_ascii=False),
+                now,
+                now,
+            ),
         )
         conn.commit()
 
@@ -575,12 +583,13 @@ def enqueueAssetImageTask(assetId):
                 promptText = compileAssetSheetPrompt(assetRow, visualStyle=visualStyle)
                 aType = assetRow.get("assetType") or "character"
                 width, height = (1024, 1024) if aType != "scene" else (1472, 832)
+                freshSeed = random.randint(1, 2147483647)
 
                 comfyStatus = checkComfyStatus()
                 if comfyStatus["online"]:
-                    wf = buildFlux3KeyframeWorkflow(promptText, width=width, height=height, steps=16)
+                    wf = buildFlux3KeyframeWorkflow(promptText, width=width, height=height, steps=16, seed=freshSeed)
                     _, kfUrl, kfPath = _submitAndPollComfyWorkflow(wf, comfyStatus["endpoint"], expectedType="image")
-                    localName = f"asset_ref_{assetId}_{int(time.time())}.png"
+                    localName = f"asset_ref_{assetId}_{int(time.time()*1000)}.png"
                     assetDest = ASSETS_DIR / localName
                     shutil.copy2(str(kfPath), str(assetDest))
                     imgUrl = f"/media/assets/{localName}"
@@ -611,11 +620,11 @@ def enqueueAssetImageTask(assetId):
     return taskId
 
 
-def enqueueKeyframeTask(shotId, frameRole="both"):
+def enqueueKeyframeTask(shotId, frameRole="both", forceRegenerate=True):
     """
-    提交分镜首帧 / 尾帧 / 双关键帧生成任务：
+    提交分镜首帧 / 尾帧 / 双关键帧生成或重新生成任务：
     - frameRole: 'first' | 'last' | 'both'
-    - 如果该镜头开启了 lockFromPrevEnd=1 且上一镜头已有尾帧，则首帧自动无损锁定上一镜尾帧！
+    - forceRegenerate: 为 True 时强制重新生成对应关键帧（即使之前已有图片或曾勾选 lockFromPrevEnd）
     """
     now = time.time()
     taskId = f"kf_{uuid.uuid4().hex[:10]}"
@@ -623,7 +632,9 @@ def enqueueKeyframeTask(shotId, frameRole="both"):
         shot = conn.execute("SELECT * FROM shots WHERE id=?", (shotId,)).fetchone()
         if not shot:
             raise ValueError("未找到指定镜头")
-        project = conn.execute("SELECT * FROM projects WHERE id=?", (shot["projectId"],)).fetchone()
+        # 若用户显式要求重画起点帧 (frameRole=='first') 或强制重画，解除 lockFromPrevEnd 以免被上一镜旧图覆盖
+        if forceRegenerate and frameRole in ("first", "both") and int(shot["lockFromPrevEnd"] or 0) == 1:
+            conn.execute("UPDATE shots SET lockFromPrevEnd=0, updatedAt=? WHERE id=?", (now, shotId))
         conn.execute(
             """
             INSERT INTO renderTasks (id, projectId, episodeId, shotId, taskType, engineName, status, phaseText, createdAt, updatedAt)
@@ -644,15 +655,15 @@ def enqueueKeyframeTask(shotId, frameRole="both"):
             with _COMFY_JOB_SEMAPHORE:
                 with closing(getDbConnection()) as conn:
                     conn.execute(
-                        "UPDATE renderTasks SET phaseText='正在生成关键帧...', updatedAt=? WHERE id=?",
+                        "UPDATE renderTasks SET phaseText='正在生成关键帧画面...', updatedAt=? WHERE id=?",
                         (time.time(), taskId),
                     )
                     conn.commit()
                     shotRow = dict(conn.execute("SELECT * FROM shots WHERE id=?", (shotId,)).fetchone())
                     projRow = dict(conn.execute("SELECT * FROM projects WHERE id=?", (shotRow["projectId"],)).fetchone())
 
-                # 先执行帧锁检查：如果锁定了上一镜尾帧，首帧直接复用上一镜尾帧
-                syncEpisodeFrameLocks(shotRow["episodeId"])
+                if not forceRegenerate:
+                    syncEpisodeFrameLocks(shotRow["episodeId"], overwriteExisting=False)
                 with closing(getDbConnection()) as conn:
                     shotRow = dict(conn.execute("SELECT * FROM shots WHERE id=?", (shotId,)).fetchone())
                     projectAssets = [dict(a) for a in conn.execute("SELECT * FROM assets WHERE projectId=?", (shotRow["projectId"],))]
@@ -664,7 +675,9 @@ def enqueueKeyframeTask(shotId, frameRole="both"):
                 firstUrl = shotRow.get("firstFrameUrl") or ""
                 lastUrl = shotRow.get("lastFrameUrl") or ""
 
-                needFirst = frameRole in ("first", "both") and not (int(shotRow.get("lockFromPrevEnd") or 0) == 1 and firstUrl)
+                needFirst = frameRole in ("first", "both") and (
+                    forceRegenerate or not (int(shotRow.get("lockFromPrevEnd") or 0) == 1 and firstUrl)
+                )
                 needLast = frameRole in ("last", "both") and (shotRow.get("shotCategory") == "action_fl2va" or frameRole == "last")
 
                 lockedFirstPrompt = compileLockedKeyframePrompt(shotRow, projectAssets, projRow.get("visualStyle", ""), frameRole="first")
