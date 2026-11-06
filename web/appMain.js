@@ -146,7 +146,25 @@ async function loadProjects(preferredId = null) {
   currentState.projects = data.projects || [];
   const sel = document.getElementById("projectSelect");
   if (currentState.projects.length === 0) {
+    currentState.activeProjectId = null;
+    currentState.activeEpisodeId = null;
+    currentState.workspace = null;
     sel.innerHTML = `<option value="">暂无项目，请点击右上角新建短剧</option>`;
+    document.getElementById("episodeSelect").innerHTML = `<option value="">暂无剧集</option>`;
+    document.getElementById("assetCountLabel").textContent = "0 项";
+    document.getElementById("assetList").innerHTML = `<div style="color:var(--text-muted); font-size:12px; padding:12px 0;">新建短剧并拆解剧本后，角色/场景/道具将自动入库</div>`;
+    document.getElementById("filmstripRibbon").style.display = "none";
+    document.getElementById("masterBanner").style.display = "none";
+    document.getElementById("sceneLedgerPanel").style.display = "none";
+    updateWorkflowStepper([], null);
+    document.getElementById("shotListContainer").innerHTML = `
+      <div style="background:var(--bg-panel); border:1px dashed var(--border-subtle); border-radius:12px; padding:48px 24px; text-align:center; color:var(--text-secondary);">
+        <div style="font-size:16px; font-weight:700; color:var(--text-primary); margin-bottom:8px;">🎬 工作台数据已清空，准备就绪</div>
+        <div style="margin-bottom:16px;">请点击右上角或下方按钮创建一个新的短剧项目开始验证全流程。</div>
+        <button class="btn btnPrimary" onclick="openNewProjectModal()">➕ 立即新建短剧项目</button>
+      </div>
+    `;
+    document.getElementById("taskListContainer").innerHTML = `<div style="color:var(--text-muted); font-size:12px; padding:12px 0;">暂无生成任务</div>`;
     return;
   }
   sel.innerHTML = currentState.projects
@@ -470,11 +488,40 @@ function renderShotCards(shots, tasks = []) {
 
   const container = document.getElementById("shotListContainer");
   if (!shots.length) {
-    container.innerHTML = `
-      <div style="background:var(--bg-panel); border:1px dashed var(--border-subtle); border-radius:10px; padding:40px; text-align:center; color:var(--text-secondary);">
-        当前剧集还没有分镜。请点击上方 <strong>“第 ① 步：打开剧本与分镜拆解”</strong> 自动生成每一镜的分镜卡片。
-      </div>
-    `;
+    const ep = currentState.workspace && currentState.workspace.activeEpisode;
+    const rawNovel = (ep && (ep.novelContent || ep.scriptContent)) || "";
+    if (rawNovel.trim().length > 0) {
+      const previewSnippet = escapeHtml(rawNovel.trim().slice(0, 140)) + (rawNovel.trim().length > 140 ? "..." : "");
+      container.innerHTML = `
+        <div style="background:var(--bg-panel); border:1px solid rgba(245,158,11,0.45); border-radius:12px; padding:32px 28px; display:flex; flex-direction:column; gap:14px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+            <div style="font-size:16px; font-weight:700; color:var(--amber-gold);">
+              📖 已录入本集小说/剧本内容（共 ${rawNovel.trim().length} 字），尚未拆解为分镜
+            </div>
+            <span class="eraBadge">待执行第 ① 步：剧本改写与分镜拆解</span>
+          </div>
+          <div style="background:var(--bg-void); border:1px solid var(--border-subtle); border-radius:8px; padding:12px; font-size:12.5px; color:var(--text-secondary);">
+            <strong>内容摘要：</strong>${previewSnippet}
+          </div>
+          <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
+            <button class="btn btnPrimary" onclick="openScriptModalAndRunAuto()">
+              🚀 一键全自动：改写分场剧本 + 提取角色场景 + 生成全集分镜表
+            </button>
+            <button class="btn btnCyan" onclick="openScriptModal()">
+              📜 打开双栏剧本工作台（分步审阅/微调）
+            </button>
+          </div>
+        </div>
+      `;
+    } else {
+      container.innerHTML = `
+        <div style="background:var(--bg-panel); border:1px dashed var(--border-subtle); border-radius:12px; padding:42px 24px; text-align:center; color:var(--text-secondary);">
+          <div style="font-size:15px; font-weight:700; color:var(--text-primary); margin-bottom:8px;">📜 当前剧集还没有录入小说或分镜</div>
+          <div style="margin-bottom:16px;">请点击下方按钮粘贴小说原文，AI 将自动为您提取角色场景并拆解出每一镜的首尾帧分镜卡片。</div>
+          <button class="btn btnPrimary" onclick="openScriptModal()">📜 打开剧本与分镜拆解工作台</button>
+        </div>
+      `;
+    }
     return;
   }
 
@@ -958,19 +1005,157 @@ async function copyCompiledPrompt() {
   }
 }
 
-function openScriptModal() {
+let scriptProgressTimer = null;
+
+function setScriptButtonsBusy(isBusy, activeMode = "") {
+  const b1 = document.getElementById("btnStep1Rewrite");
+  const b2 = document.getElementById("btnStep2Breakdown");
+  const bAll = document.getElementById("btnOneClickAll");
+  if (b1) {
+    b1.disabled = isBusy;
+    b1.textContent =
+      isBusy && activeMode === "rewrite"
+        ? "⏳ 正在改写分场剧本并提取角色..."
+        : "✨ 第一步：小说 → 改写剧本 & 提取角色场景";
+  }
+  if (b2) {
+    b2.disabled = isBusy;
+    b2.textContent =
+      isBusy && activeMode === "breakdown"
+        ? "⏳ 正在生成分镜表..."
+        : "🎬 第二步：按右侧剧本生成分镜表";
+  }
+  if (bAll) {
+    bAll.disabled = isBusy;
+    bAll.textContent =
+      isBusy && activeMode === "auto"
+        ? "⏳ 正在全自动改写并拆解分镜..."
+        : "🚀 一键全自动：改写剧本 + 生成分镜表";
+  }
+}
+
+function updateScriptStagePills(activeStageIndex, allDone = false) {
+  [1, 2, 3, 4].forEach((idx) => {
+    const pill = document.getElementById(`sPill${idx}`);
+    if (!pill) return;
+    pill.classList.remove("activeStage", "doneStage");
+    if (allDone || idx < activeStageIndex) {
+      pill.classList.add("doneStage");
+    } else if (idx === activeStageIndex) {
+      pill.classList.add("activeStage");
+    }
+  });
+}
+
+function startScriptProgressTracker(stagesConfig) {
+  const box = document.getElementById("scriptProgressBox");
+  const icon = document.getElementById("scriptPhaseIcon");
+  const title = document.getElementById("scriptPhaseTitle");
+  const sub = document.getElementById("scriptPhaseSub");
+  const timerEl = document.getElementById("scriptTimerText");
+  const bar = document.getElementById("scriptProgressBar");
+
+  if (!box) return;
+  box.style.display = "flex";
+  box.className = "scriptProgressBox";
+  if (icon) icon.textContent = "⏳";
+
+  const startTime = Date.now();
+  if (scriptProgressTimer) clearInterval(scriptProgressTimer);
+
+  const tick = () => {
+    const elapsedSec = (Date.now() - startTime) / 1000;
+    if (timerEl) timerEl.textContent = `已耗时 ${elapsedSec.toFixed(1)}s`;
+
+    // 根据耗时匹配当前阶段说明
+    let current = stagesConfig[0];
+    for (const st of stagesConfig) {
+      if (elapsedSec >= st.afterSec) {
+        current = st;
+      }
+    }
+    if (title) title.textContent = current.title;
+    if (sub) sub.textContent = current.sub;
+    if (bar) {
+      const pct = Math.min(94, Math.round(current.basePct + elapsedSec * 2.2));
+      bar.value = pct;
+    }
+    updateScriptStagePills(current.pillIndex, false);
+  };
+
+  tick();
+  scriptProgressTimer = setInterval(tick, 200);
+}
+
+function finishScriptProgressTracker(success, titleText, subText, pillDoneUntil = 4) {
+  if (scriptProgressTimer) {
+    clearInterval(scriptProgressTimer);
+    scriptProgressTimer = null;
+  }
+  const box = document.getElementById("scriptProgressBox");
+  const icon = document.getElementById("scriptPhaseIcon");
+  const title = document.getElementById("scriptPhaseTitle");
+  const sub = document.getElementById("scriptPhaseSub");
+  const bar = document.getElementById("scriptProgressBar");
+
+  if (!box) return;
+  box.style.display = "flex";
+  box.className = `scriptProgressBox ${success ? "doneState" : "errorState"}`;
+  if (icon) icon.textContent = success ? "✅" : "❌";
+  if (title) {
+    title.style.color = success ? "var(--emerald-ok)" : "var(--rose-err)";
+    title.textContent = titleText;
+  }
+  if (sub) sub.textContent = subText;
+  if (bar) bar.value = success ? 100 : 0;
+
+  [1, 2, 3, 4].forEach((idx) => {
+    const pill = document.getElementById(`sPill${idx}`);
+    if (!pill) return;
+    pill.classList.remove("activeStage", "doneStage");
+    if (success && idx <= pillDoneUntil) {
+      pill.classList.add("doneStage");
+    }
+  });
+}
+
+function openScriptModal(showGuideBanner = false) {
   if (!currentState.workspace || !currentState.workspace.activeEpisode) {
     showToast("请先选择或创建一个短剧项目", "error");
     return;
   }
   const ep = currentState.workspace.activeEpisode;
-  document.getElementById("novelInputArea").value = ep.novelContent || ep.scriptContent || "";
-  document.getElementById("scriptInputArea").value = ep.scriptContent || "";
+  const rawNovel = ep.novelContent || ep.scriptContent || "";
+  document.getElementById("novelInputArea").value = rawNovel;
+  document.getElementById("scriptInputArea").value = ep.scriptContent && ep.sceneLedger && ep.sceneLedger.length ? ep.scriptContent : "";
   document.getElementById("rewriteStatusBadge").textContent =
     ep.sceneLedger && ep.sceneLedger.length
       ? `✅ 已建立 ${ep.sceneLedger.length} 场调度账本`
-      : "";
+      : "尚未生成分场剧本";
+
+  const box = document.getElementById("scriptProgressBox");
+  if (showGuideBanner && rawNovel.trim().length > 0 && box) {
+    box.style.display = "flex";
+    box.className = "scriptProgressBox";
+    document.getElementById("scriptPhaseIcon").textContent = "👋";
+    const title = document.getElementById("scriptPhaseTitle");
+    title.style.color = "var(--amber-gold)";
+    title.textContent = `已自动载入您录入的小说原文（共 ${rawNovel.trim().length} 字）`;
+    document.getElementById("scriptPhaseSub").textContent =
+      "请点击右下角「🚀 一键全自动：改写剧本 + 生成分镜表」，或先点左上方「✨ 第一步」审阅剧本。";
+    document.getElementById("scriptTimerText").textContent = "准备就绪";
+    document.getElementById("scriptProgressBar").value = 8;
+    updateScriptStagePills(1, false);
+  } else if (box && !scriptProgressTimer) {
+    box.style.display = "none";
+  }
+
   openDialog("scriptModal");
+}
+
+async function openScriptModalAndRunAuto() {
+  openScriptModal(false);
+  await submitScriptBreakdown(true);
 }
 
 async function submitNovelRewrite() {
@@ -982,6 +1167,32 @@ async function submitNovelRewrite() {
   }
   const badge = document.getElementById("rewriteStatusBadge");
   badge.textContent = "⏳ 正在改写分场剧本并提取角色场景...";
+
+  setScriptButtonsBusy(true, "rewrite");
+  startScriptProgressTracker([
+    {
+      afterSec: 0,
+      pillIndex: 1,
+      basePct: 12,
+      title: "正在执行阶段 ①：解析小说原文与心理描写视觉外化...",
+      sub: "正在调用大模型通读小说段落，将抽象心理活动转化为镜头可拍的物理动作与神态细节",
+    },
+    {
+      afterSec: 2.5,
+      pillIndex: 2,
+      basePct: 38,
+      title: "正在执行阶段 ②：自动识别并提取本集角色、场景与关键道具...",
+      sub: "自动区分角色不同时期（前世/今生）外貌锚点，防止后续视频渲染串台",
+    },
+    {
+      afterSec: 5.5,
+      pillIndex: 3,
+      basePct: 65,
+      title: "正在执行阶段 ③：建立 180° 空间站位轴线与标准分场剧本...",
+      sub: "锁定每一场戏的人物左右站位方向与道具状态流转，生成右侧影视级分场剧本",
+    },
+  ]);
+
   try {
     const res = await apiFetch(`/api/episodes/${currentState.activeEpisodeId}/rewriteScript`, {
       method: "POST",
@@ -989,33 +1200,113 @@ async function submitNovelRewrite() {
     });
     document.getElementById("scriptInputArea").value = res.formattedScript || "";
     badge.textContent = `✅ 已生成 ${res.sceneCount} 场剧本，提取/更新 ${res.assetCountChanged} 项资产！`;
+    finishScriptProgressTracker(
+      true,
+      `第一步完成：已生成 ${res.sceneCount} 场标准影视剧本，并自动入库 ${res.assetCountChanged} 项角色/场景/道具！`,
+      "您可以检查或微调下方右侧的分场剧本，然后点击右下角「🎬 第二步：按右侧剧本生成分镜表」完成拆解。",
+      3
+    );
     showToast(`已完成剧本改写并自动入库 ${res.assetCountChanged} 项角色/场景/道具`, "success");
     await loadWorkspace(currentState.activeProjectId, currentState.activeEpisodeId);
   } catch (err) {
     badge.textContent = "❌ 改写失败";
+    finishScriptProgressTracker(false, "小说改写分场剧本失败", err.message, 0);
     showToast(`小说改写失败: ${err.message}`, "error");
+  } finally {
+    setScriptButtonsBusy(false);
   }
 }
 
-async function submitScriptBreakdown() {
+async function submitScriptBreakdown(autoRewriteFirst = false) {
   if (!currentState.activeEpisodeId) return;
   const novelText = document.getElementById("novelInputArea").value.trim();
-  const scriptText = document.getElementById("scriptInputArea").value.trim();
+  let scriptText = document.getElementById("scriptInputArea").value.trim();
   if (!novelText && !scriptText) {
     showToast("请输入小说原文或剧本内容", "error");
     return;
   }
+
+  setScriptButtonsBusy(true, autoRewriteFirst ? "auto" : "breakdown");
+
   try {
-    showToast("正在为您拆解全集分镜表，请稍候...", "info");
+    // 如果用户点击「一键全自动」或者右侧还没有分场剧本，先显式执行第一步改写并实时展示在右栏
+    if (autoRewriteFirst || !scriptText) {
+      startScriptProgressTracker([
+        {
+          afterSec: 0,
+          pillIndex: 1,
+          basePct: 10,
+          title: "全自动拆解 (1/2)：正在解析小说原文并转化为可视动作...",
+          sub: "将小说叙事改写为标准分场结构，剔除冗余旁白，提炼精炼对白",
+        },
+        {
+          afterSec: 2.2,
+          pillIndex: 2,
+          basePct: 30,
+          title: "全自动拆解 (1/2)：正在自动提取角色、场景与关键道具入库...",
+          sub: "提取出的角色与场景将自动出现在主界面左侧「角色 / 场景 / 道具库」中",
+        },
+        {
+          afterSec: 4.8,
+          pillIndex: 3,
+          basePct: 48,
+          title: "全自动拆解 (1/2)：正在生成 180° 空间轴线与分场调度账本...",
+          sub: "即将完成右侧分场剧本并自动进入逐镜首尾帧拆解...",
+        },
+      ]);
+
+      const rewriteRes = await apiFetch(`/api/episodes/${currentState.activeEpisodeId}/rewriteScript`, {
+        method: "POST",
+        body: JSON.stringify({ novelContent: novelText || scriptText }),
+      });
+      scriptText = rewriteRes.formattedScript || scriptText;
+      document.getElementById("scriptInputArea").value = scriptText;
+      document.getElementById("rewriteStatusBadge").textContent = `✅ 已生成 ${rewriteRes.sceneCount} 场剧本（提取 ${rewriteRes.assetCountChanged} 项资产）`;
+    }
+
+    // 紧接着执行第二步：拆解首尾关键帧分镜表
+    startScriptProgressTracker([
+      {
+        afterSec: 0,
+        pillIndex: 4,
+        basePct: 62,
+        title: "全自动拆解 (2/2)：正在按分场剧本拆解逐镜「首尾关键帧」故事板...",
+        sub: "正在为每一镜规划：0.0s 起点画面提示词、中间物理运动轨迹、动作结果落点画面与角色台词...",
+      },
+      {
+        afterSec: 3.5,
+        pillIndex: 4,
+        basePct: 82,
+        title: "全自动拆解 (2/2)：正在配置前后镜头衔接锁 (Frame Lock) 与声学约束...",
+        sub: "自动区分「⚡ 动作推进镜 (双图锁死动作)」与「💬 台词博弈镜 (单图开口说话)」，即将生成完毕...",
+      },
+    ]);
+
     const res = await apiFetch(`/api/episodes/${currentState.activeEpisodeId}/breakScript`, {
       method: "POST",
       body: JSON.stringify({ novelContent: novelText, scriptContent: scriptText }),
     });
-    closeModal("scriptModal");
+
+    finishScriptProgressTracker(
+      true,
+      `🎉 拆解全部完成！共生成 ${res.shotCount} 个首尾帧分镜（覆盖 ${res.sceneCount || 1} 个场次）`,
+      "正在为您打开主工作台分镜列表...",
+      4
+    );
     await loadWorkspace(currentState.activeProjectId, currentState.activeEpisodeId);
-    showToast(`🎉 成功生成 ${res.shotCount} 个分镜！接下来请点击顶部「第 ② 步」或「第 ③ 步」`, "success");
+
+    setTimeout(() => {
+      closeModal("scriptModal");
+      showToast(
+        `🎉 成功生成 ${res.shotCount} 个分镜！现在可点击顶部「第 ② 步」生成画面或「第 ③ 步」生成视频`,
+        "success"
+      );
+    }, 650);
   } catch (err) {
+    finishScriptProgressTracker(false, "剧本拆解失败", err.message, 0);
     showToast(`剧本拆解失败: ${err.message}`, "error");
+  } finally {
+    setScriptButtonsBusy(false);
   }
 }
 
@@ -1025,6 +1316,7 @@ function openNewProjectModal() {
 
 async function submitNewProject() {
   const title = document.getElementById("newProjTitle").value.trim();
+  const novelContent = document.getElementById("newProjNovel").value.trim();
   if (!title) {
     showToast("请输入短剧名称", "error");
     return;
@@ -1037,12 +1329,17 @@ async function submitNewProject() {
         genre: document.getElementById("newProjGenre").value.trim(),
         visualStyle: document.getElementById("newProjStyle").value.trim(),
         aspectRatio: document.getElementById("newProjRatio").value,
-        novelContent: document.getElementById("newProjNovel").value.trim(),
+        novelContent,
       }),
     });
     closeModal("newProjectModal");
-    showToast(`已创建短剧项目《${title}》`, "success");
     await loadProjects(res.projectId);
+    if (novelContent.length > 0) {
+      showToast(`已创建《${title}》，已为您打开第 ① 步剧本与分镜拆解工作台！`, "success");
+      openScriptModal(true);
+    } else {
+      showToast(`已创建短剧项目《${title}》，请点击「第 ① 步」粘贴小说并拆解分镜`, "success");
+    }
   } catch (err) {
     showToast(`创建项目失败: ${err.message}`, "error");
   }

@@ -212,29 +212,50 @@
         </div>
         <button class="btn btnSmall" onclick="closeModal('scriptModal')">✕</button>
       </div>
+
+      <!-- 剧本改写与分镜拆解实时进度面板 -->
+      <div id="scriptProgressBox" class="scriptProgressBox" style="display:none;" role="status" aria-live="polite">
+        <div class="scriptProgressHeader">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span id="scriptPhaseIcon" style="font-size:16px;">⏳</span>
+            <strong id="scriptPhaseTitle" style="font-size:13.5px; color:var(--amber-gold);">正在准备处理...</strong>
+          </div>
+          <span id="scriptTimerText" style="font-family:var(--font-mono); font-size:12px; color:var(--cyan-monitor);">0.0s</span>
+        </div>
+        <div id="scriptPhaseSub" style="font-size:12px; color:var(--text-secondary);"></div>
+        <progress id="scriptProgressBar" class="studioProgress" max="100" aria-label="剧本改写与分镜拆解进度"></progress>
+        <div class="scriptStageSteps">
+          <span class="stageStepPill" id="sPill1">① 解析小说与心理外化</span>
+          <span class="stageStepPill" id="sPill2">② 提取角色/场景/道具入库</span>
+          <span class="stageStepPill" id="sPill3">③ 生成 180° 轴线分场剧本</span>
+          <span class="stageStepPill" id="sPill4">④ 拆解逐镜首尾帧分镜表</span>
+        </div>
+      </div>
+
       <div class="scriptCompareGrid">
         <div class="formGroup">
           <div style="display:flex; justify-content:space-between; align-items:center;">
             <label for="novelInputArea">📖 1. 粘贴小说原文或故事大纲</label>
-            <button class="btn btnSmall btnCyan" onclick="submitNovelRewrite()">✨ 第一步：小说 → 改写剧本 & 提取角色场景</button>
+            <button id="btnStep1Rewrite" class="btn btnSmall btnCyan" onclick="submitNovelRewrite()">✨ 第一步：小说 → 改写剧本 & 提取角色场景</button>
           </div>
-          <textarea id="novelInputArea" class="promptTextarea" style="min-height:350px; font-size:12.5px;" placeholder="在这里粘贴本集小说原文..."></textarea>
+          <textarea id="novelInputArea" class="promptTextarea" style="min-height:340px; font-size:12.5px;" placeholder="在这里粘贴本集小说原文..."></textarea>
         </div>
         <div class="formGroup">
           <div style="display:flex; justify-content:space-between; align-items:center;">
             <label for="scriptInputArea">🎬 2. 改写后的分场影视剧本（可手动微调）</label>
-            <span id="rewriteStatusBadge" style="font-size:11px; color:var(--emerald-ok);"></span>
+            <span id="rewriteStatusBadge" style="font-size:11.5px; font-weight:600; color:var(--emerald-ok);"></span>
           </div>
-          <textarea id="scriptInputArea" class="promptTextarea" style="min-height:350px; font-size:12.5px; font-family:var(--font-mono);" placeholder="点击左上方「第一步」自动生成标准分场剧本，或直接在此编写剧本..."></textarea>
+          <textarea id="scriptInputArea" class="promptTextarea" style="min-height:340px; font-size:12.5px; font-family:var(--font-mono);" placeholder="点击左上方「第一步」自动生成标准分场剧本，或直接点击右下角「一键全自动拆解」..."></textarea>
         </div>
       </div>
-      <div style="display:flex; justify-content:space-between; align-items:center; padding-top:8px; border-top:1px solid var(--border-subtle);">
+      <div style="display:flex; justify-content:space-between; align-items:center; padding-top:8px; border-top:1px solid var(--border-subtle); flex-wrap:wrap; gap:10px;">
         <span style="font-size:12px; color:var(--text-secondary);">
-          💡 提示：直接点击右下角「第二步：生成分镜表」即可自动完成拆解并在主界面展示每一镜卡片。
+          💡 提示：您可以先点「第一步」审阅修改剧本后再点「第二步」；也可以直接点右侧「⚡ 一键全自动完成两步」。
         </span>
         <div style="display:flex; gap:10px;">
           <button class="btn" onclick="closeModal('scriptModal')">关闭 (Esc)</button>
-          <button class="btn btnPrimary" onclick="submitScriptBreakdown()">🚀 第二步：按剧本生成全集分镜表</button>
+          <button id="btnStep2Breakdown" class="btn btnCyan" onclick="submitScriptBreakdown(false)">🎬 第二步：按右侧剧本生成分镜表</button>
+          <button id="btnOneClickAll" class="btn btnPrimary" onclick="submitScriptBreakdown(true)">🚀 一键全自动：改写剧本 + 生成分镜表</button>
         </div>
       </div>
     </div>

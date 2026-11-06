@@ -1165,6 +1165,66 @@ dialog.studioDialog::backdrop {
   gap: 14px;
 }
 
+/* 剧本改写与分镜拆解实时进度面板 */
+.scriptProgressBox {
+  background: linear-gradient(145deg, rgba(245, 158, 11, 0.1) 0%, rgba(6, 182, 212, 0.08) 100%);
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  border-radius: 10px;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.scriptProgressBox.doneState {
+  background: linear-gradient(145deg, rgba(16, 185, 129, 0.14) 0%, rgba(6, 182, 212, 0.08) 100%);
+  border-color: rgba(16, 185, 129, 0.55);
+}
+
+.scriptProgressBox.errorState {
+  background: rgba(244, 63, 94, 0.12);
+  border-color: rgba(244, 63, 94, 0.5);
+}
+
+.scriptProgressHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.scriptStageSteps {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.stageStepPill {
+  font-size: 11.5px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: var(--bg-void);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  text-align: center;
+  transition: all 0.2s ease;
+}
+
+.stageStepPill.activeStage {
+  background: var(--amber-glow);
+  border-color: var(--amber-gold);
+  color: var(--amber-gold);
+  font-weight: 700;
+}
+
+.stageStepPill.doneStage {
+  background: rgba(16, 185, 129, 0.14);
+  border-color: rgba(16, 185, 129, 0.45);
+  color: var(--emerald-ok);
+  font-weight: 600;
+}
+
 .scriptCompareGrid {
   display: grid;
   grid-template-columns: 1fr 1fr;
