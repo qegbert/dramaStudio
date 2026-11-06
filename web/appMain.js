@@ -1109,27 +1109,23 @@ let scriptProgressTimer = null;
 function setScriptButtonsBusy(isBusy, activeMode = "") {
   const b1 = document.getElementById("btnStep1Rewrite");
   const b2 = document.getElementById("btnStep2Breakdown");
-  const bAll = document.getElementById("btnOneClickAll");
+  const bGo = document.getElementById("btnGoToAssetBible");
   if (b1) {
     b1.disabled = isBusy;
     b1.textContent =
       isBusy && activeMode === "rewrite"
-        ? "⏳ 正在改写分场剧本并提取角色..."
-        : "✨ 第一步：小说 → 改写剧本 & 提取角色场景";
+        ? "⏳ AI 正在改写分场剧本并提取角色..."
+        : "✨ 让 AI 自动改写剧本 & 提取角色场景";
+  }
+  if (bGo) {
+    bGo.disabled = isBusy;
   }
   if (b2) {
     b2.disabled = isBusy;
     b2.textContent =
       isBusy && activeMode === "breakdown"
-        ? "⏳ 正在生成分镜表..."
-        : "🎬 第二步：按右侧剧本生成分镜表";
-  }
-  if (bAll) {
-    bAll.disabled = isBusy;
-    bAll.textContent =
-      isBusy && activeMode === "auto"
-        ? "⏳ 正在全自动改写并拆解分镜..."
-        : "🚀 一键全自动：改写剧本 + 生成分镜表";
+        ? "⏳ AI 正在生成分镜表..."
+        : "🎬 直接按剧本生成分镜表";
   }
 }
 
@@ -1655,8 +1651,9 @@ async function submitNewProject() {
     closeModal("newProjectModal");
     await loadProjects(res.projectId);
     if (novelContent.length > 0) {
-      showToast(`已创建《${title}》，已为您打开第 ① 步剧本与分镜拆解工作台！`, "success");
-      openScriptModal(true);
+      showToast(`已创建《${title}》，正在由 AI 自动改写分场剧本并提取角色场景...`, "info");
+      openScriptModal(false);
+      await submitNovelRewrite();
     } else {
       showToast(`已创建短剧项目《${title}》，请点击「第 ① 步」粘贴小说并拆解分镜`, "success");
     }

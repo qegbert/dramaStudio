@@ -255,18 +255,21 @@
 
       <div class="scriptCompareGrid">
         <div class="formGroup">
-          <div style="display:flex; justify-content:space-between; align-items:center;">
-            <label for="novelInputArea">📖 1. 粘贴小说原文或故事大纲</label>
-            <button id="btnStep1Rewrite" class="btn btnSmall btnCyan" onclick="submitNovelRewrite()">✨ 第一步：小说 → 改写剧本 & 提取角色场景</button>
+          <div style="display:flex; justify-content:space-between; align-items:center; min-height:28px;">
+            <label for="novelInputArea">📖 1. 粘贴小说原文或故事大纲（人工输入）</label>
+            <span style="font-size:11.5px; color:var(--text-secondary);">粘贴后点击右侧按钮由 AI 自动改写 ➔</span>
           </div>
           <textarea id="novelInputArea" class="promptTextarea" style="min-height:340px; font-size:12.5px;" placeholder="在这里粘贴本集小说原文..."></textarea>
         </div>
         <div class="formGroup">
-          <div style="display:flex; justify-content:space-between; align-items:center;">
-            <label for="scriptInputArea">🎬 2. 改写后的分场影视剧本（可手动微调）</label>
-            <span id="rewriteStatusBadge" style="font-size:11.5px; font-weight:600; color:var(--emerald-ok);"></span>
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; min-height:28px;">
+            <label for="scriptInputArea">🤖 2. AI 自动改写的分场影视剧本（AI 自动生成，生成后可微调）</label>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <span id="rewriteStatusBadge" style="font-size:11.5px; font-weight:600; color:var(--emerald-ok);"></span>
+              <button id="btnStep1Rewrite" class="btn btnSmall btnCyan" onclick="submitNovelRewrite()">✨ 让 AI 自动改写剧本 & 提取角色场景</button>
+            </div>
           </div>
-          <textarea id="scriptInputArea" class="promptTextarea" style="min-height:340px; font-size:12.5px; font-family:var(--font-mono);" placeholder="点击左上方「第一步」自动生成标准分场剧本，或直接点击右下角「一键全自动拆解」..."></textarea>
+          <textarea id="scriptInputArea" class="promptTextarea" style="min-height:340px; font-size:12.5px; font-family:var(--font-mono);" placeholder="【无需手写】点击右上方「✨ 让 AI 自动改写剧本 & 提取角色场景」，DeepSeek 大模型将自动把左侧小说改写为标准分场剧本显示在这里。生成后如果您想改某句台词也可以直接在此微调..."></textarea>
         </div>
       </div>
       <div style="display:flex; justify-content:space-between; align-items:center; padding-top:8px; border-top:1px solid var(--border-subtle); flex-wrap:wrap; gap:10px;">

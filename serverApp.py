@@ -326,7 +326,16 @@ class StudioRequestHandler(BaseHTTPRequestHandler):
                     "model": settings.get("llmModel", "deepseek-chat"),
                 }
                 rewritten = rewriteNovelToSceneLedger(novelText, assets, proj["visualStyle"], llmConfig)
-                assetCountChanged = upsertExtractedAssets(ep["projectId"], rewritten.get("extractedAssets") or [])
+                extractedList = rewritten.get("extractedAssets") or []
+                if extractedList:
+                    # 清理尚未生成定妆图的旧草稿资产，防止多次点击改写时产生同义不同名的重复资产
+                    with closing(getDbConnection()) as conn:
+                        conn.execute(
+                            "DELETE FROM assets WHERE projectId=? AND (imageUrl IS NULL OR imageUrl='')",
+                            (ep["projectId"],),
+                        )
+                        conn.commit()
+                assetCountChanged = upsertExtractedAssets(ep["projectId"], extractedList)
                 sceneLedger = rewritten.get("sceneLedger") or []
                 formattedScript = rewritten.get("formattedScript") or ""
 

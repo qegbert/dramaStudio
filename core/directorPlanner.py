@@ -149,11 +149,11 @@ def formatSceneLedgerToMarkdown(sceneLedger):
     for sc in sceneLedger:
         code = sc.get("sceneCode", "S01")
         title = sc.get("sceneTitle", "未命名场次")
-        loc = sc.get("locationName", "主场景")
+        loc = str(sc.get("locationName", "主场景")).lstrip("@").strip()
         era = sc.get("eraTag", "通用时空")
         timeOfDay = sc.get("timeOfDay", "日/内")
         axis = sc.get("spatialAxisCn") or sc.get("spatialAxis") or ""
-        castList = "、".join(f"@{c}" for c in (sc.get("allowedCharacters") or []))
+        castList = "、".join(f"@{str(c).lstrip('@').strip()}" for c in (sc.get("allowedCharacters") or []))
 
         lines = [
             f"## {code} | {timeOfDay} · {loc} | 【{era}】{title}",
@@ -163,7 +163,7 @@ def formatSceneLedgerToMarkdown(sceneLedger):
         props = sc.get("propLedger") or []
         if props:
             propStrs = [
-                f"`@{p.get('propName')}`（{p.get('initialState')} → {p.get('transitionAction')} → {p.get('finalState')}）"
+                f"`@{str(p.get('propName') or '').lstrip('@').strip()}`（{p.get('initialState')} → {p.get('transitionAction')} → {p.get('finalState')}）"
                 for p in props
             ]
             lines.append(f"- **道具状态账本**：{'；'.join(propStrs)}")
