@@ -576,6 +576,7 @@ def main():
         except Exception as err:
             print(f"[dramaStudio] 创建演示项目跳过: {err}")
 
+    ThreadingHTTPServer.allow_reuse_address = True
     server = ThreadingHTTPServer(("127.0.0.1", SERVER_PORT), StudioRequestHandler)
     print(f"============================================================")
     print(f"🎬 DramaForge Studio (自主版权 AI 短剧工业化工作台) 已启动")
