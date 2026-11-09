@@ -19,22 +19,46 @@ import urllib.request
 import urllib.error
 
 
+def _extractCorePoseFromFramePrompt(rawFramePrompt, eraTag=""):
+    """
+    从完整的生图 Prompt 中剥离冗长的静态环境/风格/人物设定头部与尾部约束，
+    仅提取最核心的“动作姿态描述句”，避免视频模型因几百字重复静态描述而把视频渲染成静态照片。
+    """
+    text = str(rawFramePrompt or "").strip()
+    if not text:
+        return ""
+    for marker in (
+        "OPENING KEYFRAME POSE (0.0s):",
+        "OPENING POSE (0.0s):",
+        "ENDING KEYFRAME POSE (Completed Payoff):",
+        "ENDING POSE (Keep exact same camera angle, character standing/sitting posture, face, clothing, and background layout as opening frame; only update the action result):",
+        "ENDING POSE:",
+    ):
+        if marker in text:
+            text = text.split(marker, 1)[1].strip()
+            break
+    for tailMarker in ("Pure photographic film frame", "Strictly NO text"):
+        if tailMarker in text:
+            text = text.split(tailMarker, 1)[0].strip()
+    return extractPureEnglishVisual(text, eraTag)
+
+
 def compileFl2vaVideoPrompt(shotDict, hasLastFrame=True):
     """
-    将单个结构化镜头编译为 MiniMax-H3 ImageToVideo (FL2VA 首尾帧模型) 原生音画提示词。
+    将单个结构化镜头编译为 MiniMax-H3 ImageToVideo (FL2VA 首尾帧模型) 原生高动态音画提示词。
     重要铁律：
-    1. 除 <d>[Chinese] ...</d> 真实角色对白外，所有画面、动作弧线 (actionArc)、轴线 (axisRule) 必须 100% 使用纯英文，
-       彻底剥离括号内的中文动作说明，防止 Qwen3-VL-32B 音画模型将中文舞台提示词当成旁白朗读出来！
-    2. 无台词镜头强制声明零人声、纯环境拟音音效。
+    1. 彻底剥离生图阶段冗长的静态背景/服装重复堆砌与 "Pure photographic frame" 静态词，
+       100% 聚焦于镜头推拉运动、0.0s 起始动作、中间大幅度连续物理动作演进与结尾落点姿态；
+    2. 除 <d>[Chinese] ...</d> 真实角色对白外，所有动作与运镜描述 100% 使用纯英文，杜绝模型乱读舞台提示词；
+    3. 每个有声镜头严格聚焦单人紧凑台词口型同步，无台词镜头强制声明零人声与高张力环境拟音。
     """
     duration = float(shotDict.get("durationSec") or 5.0)
     framing = extractPureEnglishVisual(shotDict.get("cameraFraming") or "Medium shot") or "Medium shot"
-    movement = extractPureEnglishVisual(shotDict.get("cameraMovement") or "Steady camera") or "Steady camera"
-    firstState = extractPureEnglishVisual(shotDict.get("firstFramePrompt") or "")
+    movement = extractPureEnglishVisual(shotDict.get("cameraMovement") or "Dynamic push-in camera") or "Dynamic push-in camera"
+    firstPose = _extractCorePoseFromFramePrompt(shotDict.get("firstFramePrompt") or "")
     actionArc = extractPureEnglishVisual(shotDict.get("actionArcPrompt") or "")
-    lastState = extractPureEnglishVisual(shotDict.get("lastFramePrompt") or "")
-    axisRule = extractPureEnglishVisual(shotDict.get("axisRule") or "") or "Preserve consistent left-to-right spatial axis."
-    soundscape = extractPureEnglishVisual(shotDict.get("soundscapePrompt") or "") or "Realistic room tone and physical movement Foley."
+    lastPose = _extractCorePoseFromFramePrompt(shotDict.get("lastFramePrompt") or "")
+    soundscape = extractPureEnglishVisual(shotDict.get("soundscapePrompt") or "") or "Realistic dramatic environment and physical movement Foley."
 
     try:
         dialogues = json.loads(shotDict.get("dialogueJson") or "[]")
@@ -43,80 +67,79 @@ def compileFl2vaVideoPrompt(shotDict, hasLastFrame=True):
 
     if hasLastFrame and shotDict.get("shotCategory") == "action_fl2va":
         anchorHeader = (
-            "Keyframe-anchored generation (FL2VA): "
-            "At 0.0s, the shot opens strictly from the provided first_frame keyframe. "
-            f"Over {duration:g} seconds, execute one continuous physical progression and converge smoothly into the provided last_frame keyframe at {duration:g}s."
+            "Dynamic high-motion cinematic video (FL2VA): "
+            f"From 0.0s to {duration:g}s, drive a clear, decisive, full-amplitude physical action from the opening keyframe pose to the final keyframe pose with visible body mechanics and camera momentum."
         )
     else:
         anchorHeader = (
-            "Keyframe-driven generation (I2V): "
-            "At 0.0s, the shot opens strictly from the provided first_frame keyframe, preserving character facial identity, costume, tool proportions, and spatial layout throughout."
+            "Dynamic dramatic performance video (I2V): "
+            f"Over {duration:g} seconds, perform expressive physical movement, intense gaze shifts, natural breathing, and accurate lip-sync from the opening frame."
         )
 
     timelineLines = [
-        f"[Shot 1] {framing}, {movement}. {axisRule}",
-        f"[0.0s - Opening Anchor] {firstState}",
-        f"[Motion Progression] {actionArc}",
+        f"[Camera & Blocking] {framing}, {movement}, cinematic dramatic lighting, pronounced physical motion.",
+        f"[0.0s Start Action] {firstPose}",
+        f"[0.0s -> {duration:g}s Continuous Physical Action] {actionArc}",
     ]
-    if lastState:
-        timelineLines.append(f"[{duration:g}s - Target Ending Pose] {lastState}")
+    if lastPose:
+        timelineLines.append(f"[{duration:g}s Final Payoff Pose] {lastPose}")
 
     speakerMap = {}
     validDialogueCount = 0
-    for line in dialogues:
+    for line in dialogues[:1]:
         if not isinstance(line, dict) or not str(line.get("text") or "").strip():
             continue
         validDialogueCount += 1
         speaker = str(line.get("speaker") or "Protagonist").strip()
-        speakerLabel = extractPureEnglishVisual(line.get("speaker_label") or "") or f"Speaker {validDialogueCount}"
+        speakerLabel = extractPureEnglishVisual(line.get("speaker_label") or "") or "The character in frame"
         sid = speakerMap.setdefault(speaker, len(speakerMap) + 1)
         kind = str(line.get("kind") or "onscreen").strip()
         lang = str(line.get("language") or "Chinese").strip()
-        delivery = extractPureEnglishVisual(line.get("delivery") or "") or "Natural restrained voice"
+        delivery = extractPureEnglishVisual(line.get("delivery") or "") or "Intense dramatic voice"
         text = str(line.get("text") or "").strip()
 
         if kind == "internal":
             timelineLines.append(
-                f"Audio (Internal Monologue): The internal voice of {speakerLabel} (S{sid}) says in an off-screen voiceover, {delivery}: "
-                f"<d>[{lang}] {text}</d> The visible character keeps lips completely closed with steady gaze and natural breathing."
+                f"Audio (Internal Monologue): Off-screen voiceover of {speakerLabel} (S{sid}), {delivery}: "
+                f"<d>[{lang}] {text}</d> The character on screen keeps lips closed with intense micro-expressions."
             )
         elif kind == "offscreen":
             timelineLines.append(
-                f"Audio (Off-screen): {speakerLabel} (S{sid}), outside the visible frame, says, {delivery}: "
-                f"<d>[{lang}] {text}</d> Visible listeners do not mouth these words."
+                f"Audio (Off-screen Voice): {speakerLabel} (S{sid}) shouts from off-screen, {delivery}: "
+                f"<d>[{lang}] {text}</d> The visible character reacts physically without mouthing the words."
             )
         else:
             timelineLines.append(
-                f"Audio (On-screen Lip-Sync): {speakerLabel} (S{sid}), the visible speaker, says, {delivery}: "
-                f"<d>[{lang}] {text}</d> Accurate lip-sync and natural facial muscle movement."
+                f"Audio (On-screen Lip-Sync): {speakerLabel} (S{sid}) speaks clearly on camera, {delivery}: "
+                f"<d>[{lang}] {text}</d> Clear, expressive mouth movement and emotional facial muscles synchronized to speech."
             )
 
     if validDialogueCount == 0:
         timelineLines.append(
-            "Audio (Speech): Strictly silent voice track, ZERO human speech, NO voiceover narration, NO talking, NO murmuring. Pure mechanical and environmental Foley sound effects only."
+            "Audio (Speech): Strictly silent voice track, ZERO human speech, NO voiceover narration, NO talking. Pure dramatic Foley sound effects only."
         )
 
     timelineLines.append(f"Audio (Soundscape & Foley): {soundscape}")
     timelineLines.append(
-        "Visual Quality Constraints: Single continuous shot, no hard cuts inside the clip, no morphing jumps, no text or Chinese characters anywhere, no watermark, consistent character proportions and hands."
+        "Motion & Visual Constraints: Continuous fluid motion with clear action amplitude, single uncut shot, no text or Chinese characters anywhere."
     )
 
     return anchorHeader + "\n\n" + "\n".join(timelineLines)
 
 
 def compileWan22VideoPrompt(shotDict):
-    """编译适用于 Wan 2.2 14B MoE 高低噪双专家模型的电影级纯英文视觉提示词"""
+    """编译适用于 Wan 2.2 14B MoE 高低噪双专家模型的电影级纯英文动态视觉提示词"""
     framing = extractPureEnglishVisual(shotDict.get("cameraFraming") or "Medium shot") or "Medium shot"
-    movement = extractPureEnglishVisual(shotDict.get("cameraMovement") or "Steady camera") or "Steady camera"
+    movement = extractPureEnglishVisual(shotDict.get("cameraMovement") or "Dynamic push-in") or "Dynamic push-in"
+    firstPose = _extractCorePoseFromFramePrompt(shotDict.get("firstFramePrompt") or "")
     actionArc = extractPureEnglishVisual(shotDict.get("actionArcPrompt") or "")
-    lastState = extractPureEnglishVisual(shotDict.get("lastFramePrompt") or "")
-    axisRule = extractPureEnglishVisual(shotDict.get("axisRule") or "")
+    lastPose = _extractCorePoseFromFramePrompt(shotDict.get("lastFramePrompt") or "")
     return (
-        f"Cinematic film shot, {framing}, {movement}. "
-        f"Action progression: {actionArc}. "
-        f"Ending state: {lastState}. "
-        f"{axisRule} "
-        "High-end 3D animation and realistic film lighting, natural fluid limb motion, consistent facial identity, 8k sharp details, no text, no subtitles."
+        f"High-motion cinematic drama shot, {framing}, {movement}. "
+        f"Opening state: {firstPose}. "
+        f"Continuous physical action: {actionArc}. "
+        f"Final state: {lastPose}. "
+        "Expressive body mechanics, dramatic lighting, consistent facial identity, 8k sharp details, no text, no subtitles."
     )
 
 
@@ -202,20 +225,23 @@ def _callLlmForSceneLedger(novelText, existingAssets, visualStyle, llmConfig):
     )
 
     systemPrompt = (
-        "你是一位顶级影视短剧总导演与统筹编剧。请将输入的小说原文改写为【结构化场次空间调度账本 (Scene Blocking & State Ledger)】并提取核心资产。\n"
-        "必须严格遵守以下 6 条影视工业铁律：\n"
-        "1. 【心理描写视觉外化】：严禁保留大段抽象旁白或超过18字的内心独白！必须把人物的经验、震惊、回忆外化为可见的物理动作。\n"
-        "2. 【时空与服化道严格隔离】：若存在穿越/重生/前世今生，必须拆分为不同场次（如 S01 前世现代、S02 今生修仙界）。前世场次的 allowedCharacters 只能写 `角色名（前世）`，今生场次只能写 `角色名（今生）`！古风/修仙场次的描述必须强调古代青铜/石质/木质器物与古装布履，严禁出现现代阀门手轮或现代皮靴。\n"
-        "3. 【资产提取严控精简（拒绝琐碎耗材）】：\n"
-        "   - `character`：只提取本集有明确戏份的角色（3~6个），其 `visualPrompt` 必须使用纯正英文详细描述：精确年龄与成年骨骼体态（如19岁必须写 `19-year-old adult young man, 178cm tall, lean masculine build, NOT a child`，严禁对14岁以上人物使用 `boy` 以免画成幼童）、脸型五官、固定发型、服装颜色材质。\n"
-        "   - `scene`：只提取本集核心主场景（2~4个），纯英文描述空间布局、建筑材质与主光源。\n"
-        "   - `prop`：全集最多只提取 2~4 件最核心的剧情信物或关键焦点道具！严禁把扳手、螺栓、按钮、瓦盆、烧火棍、炭条、布条、火钳等普通工具耗材提取为独立资产（普通工具直接写在镜头的 startPoseEn/endPoseEn 英文句子中即可）。\n"
-        "   - 所有资产的 `visualPrompt` 必须为纯英文视觉描述（不要夹杂 `中文：...` 或角色中文姓名，防止生图模型把汉字当招牌画进画面）。\n"
-        "4. 【镜头景别丰富交替 & 严禁单人特写塞入旁人】：\n"
-        "   - 同一场戏的连续节拍 (beats) 必须交替使用不同景别（如 `Close-up shot` 单人面部/手部特写、`Medium close-up shot` 单人近景、`Medium shot` 双人交锋），严禁连续多个镜头使用相同机位！\n"
-        "   - 【关键】如果某个节拍是单人特写或单人动作，`charactersInShot` 数组必须只填这 1 个角色！并且在 `startPoseEn` 和 `endPoseEn` 中只描述这 1 个角色（严禁提及未入镜的其他角色，防止单人特写变成多人大合照或双胞胎分身）。\n"
-        "5. 【首尾帧同机位动作演进】：对于 `action_fl2va` 动作镜，`startPoseEn` 与 `endPoseEn` 必须保持完全相同的机位景别、相同的人物站立/坐卧基础姿态与背景方位，仅改变核心肢体动作或局部状态（严禁首帧站立、尾帧突然变成盘腿坐地）。\n"
-        "6. 【生图英文描述去名字化】：在 `startPoseEn`、`actionEn`、`endPoseEn` 中，除写明角色名外，必须同时用简短视觉特征指代（如 `the 19-year-old lean worker in gray robe` vs `the fat steward in brown brocade`），让图像模型在双人同框时清晰区分两人外貌，且严禁要求画面出现任何汉字或文字标牌。\n"
+        "你是一位顶级商业爆款短剧总导演与金牌编剧。请将输入的小说原文改写为【高张力商业短剧分场剧本 + 场次空间调度账本 (Scene Blocking & State Ledger)】并提取核心资产。\n"
+        "必须严格遵守以下 8 条商业短剧工业铁律：\n"
+        "1. 【黄金前3秒生死爆点开局 (Cold Open Hook)】：严禁温吞水式慢节奏开场！第1场第1镜必须在0.5秒内切入生死危机或剧烈冲突（例如：烘干塔回火焦糊黑烟喷涌、鲁大川猛力拧死螺栓骤闻异味变色，紧接着第2镜嘶吼『赶紧断电！』而学徒慌乱误拍启动钮引发烈焰气浪迎面吞噬），绝不能磨蹭铺垫！\n"
+        "2. 【一镜一单人台词 · 严格正反打 (Shot / Reverse-Shot)】：\n"
+        "   - 绝对禁止在同一个节拍 (beat) 的 `dialogue` 数组里塞入超过 1 句台词或两个不同角色的对话！\n"
+        "   - 凡是两人交锋（如曹胖子问罪 vs 鲁大川反击），必须拆分为独立的【正反打镜头】：角色A说话一镜（1句台词） → 角色B反击一镜（1句台词），确保每个镜头的口型 (Lip-Sync) 与情绪 100% 精准咬合！\n"
+        "3. 【原著灵魂金句 100% 保留 + 爽点打脸反应镜头】：\n"
+        "   - 原著极具张力的灵魂台词必须原汁原味保留，不得删改或弱化（如「好你个废灵根！敢私拧风门？」「曹管事，杀我不急。那火蓝里透绿，是水路堵了！」「废灵根也配论火？」「行。」「这坯不是烧废的，是堵废的！」「纹是给人看的，水是给炉走的！」「十日后，火不会说谎。」）。\n"
+        "   - 每当主角做出打脸动作（如当众拧回风门令蓝绿妖火缩回樱红、一锤砸裂废坯露出半指厚水垢、按下血手印立生死状），必须紧跟明确的视觉反差与反派/学徒震惊僵住的反应细节！\n"
+        "4. 【结尾强悬念钩子 (Cliffhanger Hook)】：本集最后1~2镜必须定格在反转证物或危机钩子上（如鲁大川借金红炉火摊开掌心发亮的灵砂新垢，眼神骤冷点出：「三年老垢是慢病，里头这层新垢……是谁把黑手伸进了我的水路！」）。\n"
+        "5. 【高振幅连续物理动作驱动 (High-Amplitude Motion)】：每个节拍的 `actionEn` 必须使用强烈、具体、位移幅度饱满的连续物理动作动词（如 `violently wrenches the heavy spanner downward and jerks his head toward the smoking vent`, `slams his palm onto the red button as roaring orange flames erupt outward`, `firmly rotates the ancient bronze damper lever as wild blue-green fire shrinks into steady cherry-red glow`），严禁只写静态表情或心理活动！\n"
+        "6. 【时空与服化道严格隔离】：若存在前世/今生，必须拆分为不同场次。前世场次的 allowedCharacters 只能写 `角色名（前世）`，今生场次只能写 `角色名（今生）`。古风/修仙场次必须强调古代青铜/石质/木质器物与古装布履，严禁出现现代阀门手轮或现代皮靴。\n"
+        "7. 【资产提取严控精简 & 局部特写环境纯净】：\n"
+        "   - `character`（3~6个）、`scene`（2~4个）、`prop`（最多2~4件核心信物，严禁把扳手、螺栓、按钮、瓦盆、烧火棍、炭条等普通工具提取为独立资产）。\n"
+        "   - 所有 `visualPrompt` 必须为纯英文视觉描述（严禁夹杂中文或角色姓名）。场景 `visualPrompt` 只写整体建筑空间与光影，不要把局部小按钮（如 `red start button`）写进大场景通用描述，以免在无关特写镜头里穿帮。\n"
+        "8. 【单人镜头隔离 & 英文描述去名字化】：如果某个节拍是单人特写或单人正反打，`charactersInShot` 数组必须只填这 1 个角色！在 `startPoseEn`、`actionEn`、`endPoseEn` 中用明确外貌衣着指代人物（如 `the 50-year-old weathered repairman in blue work jacket`、`the 19-year-old lean adult young man in gray cloth robe`、`the fat steward in dark brown brocade robe`），严禁要求画面出现任何文字或汉字标牌。\n"
+        "9. 【黄金短剧节奏（全集精选 12~15 个高燃镜头）】：严禁流水账注水！将全章浓缩为 5~6 个场次、全集共 12~15 个刀刀见血的高张力镜头（平均每场 2~3 个镜头），删去琐碎过渡，确保镜头节奏极快、冲突密集！\n"
         "只输出合法 JSON 对象，格式如下：\n"
         "{\n"
         '  "extractedAssets": [{"assetType":"character|scene|prop", "name":"准确中文名称", "roleTag":"身份/用途", "eraTag":"前世|今生|通用", "visualPrompt":"Pure English detailed visual prompt (strictly no Chinese characters inside visualPrompt)", "voiceProfile":"声线特征"}],\n'
@@ -277,7 +303,7 @@ def _callLlmForSceneLedger(novelText, existingAssets, visualStyle, llmConfig):
         },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=75) as resp:
+    with urllib.request.urlopen(req, timeout=150) as resp:
         body = json.loads(resp.read().decode("utf-8"))
         content = body["choices"][0]["message"]["content"]
         return json.loads(content)
@@ -543,7 +569,34 @@ def breakScriptIntoKeyframedShots(scriptText, projectAssets, visualStyle, llmCon
         axisEn = extractPureEnglishVisual(scene.get("spatialAxis") or "", eraTag)
         allowedChars = [str(c).lstrip("@").strip() for c in (scene.get("allowedCharacters") or []) if str(c).strip()]
 
-        for beat in scene.get("beats") or []:
+        rawBeats = scene.get("beats") or []
+        expandedBeats = []
+        for rawBeat in rawBeats:
+            dlgList = [d for d in (rawBeat.get("dialogue") or []) if isinstance(d, dict) and str(d.get("text") or "").strip()]
+            # 若单个节拍包含多句对话（如两人交锋或多轮问答），自动按正反打法则切分为“一镜一人一句台词”
+            if len(dlgList) > 1:
+                for dIdx, dItem in enumerate(dlgList):
+                    subBeat = dict(rawBeat)
+                    spk = str(dItem.get("speaker") or "").lstrip("@").strip()
+                    subBeat["title"] = f"{rawBeat.get('title', '交锋')}·{spk.split('（')[0] or f'正反打{dIdx+1}'}"
+                    subBeat["dialogue"] = [dItem]
+                    subBeat["durationSec"] = max(4.0, min(6.0, round(len(str(dItem.get("text") or "")) / 3.2 + 1.8, 1)))
+                    if spk:
+                        subBeat["charactersInShot"] = [spk]
+                    subBeat["framing"] = "Medium close-up shot" if dIdx % 2 == 0 else "Close-up shot"
+                    subBeat["movement"] = "Dynamic push-in"
+                    if dIdx > 0:
+                        subBeat["startPoseCn"] = f"镜头切至{spk}正反打近景，目光锐利直视对方，开口反击"
+                        subBeat["actionCn"] = f"{spk}情绪饱满说出核心台词，面部肌肉与手势沉稳有力"
+                        subBeat["endPoseCn"] = f"{spk}话音落定，眼神冷冽定格"
+                        subBeat["startPoseEn"] = f"{spk} in a dramatic medium close-up reverse-angle shot, locking intense gaze forward."
+                        subBeat["actionEn"] = f"{spk} speaks with decisive emotional weight, leaning slightly forward with expressive facial movement."
+                        subBeat["endPoseEn"] = f"{spk} finishes speaking and holds a piercing, unyielding gaze."
+                    expandedBeats.append(subBeat)
+            else:
+                expandedBeats.append(rawBeat)
+
+        for beat in expandedBeats:
             # 严格只取本节拍实际入镜的角色（单人镜头绝不强塞第2人）
             rawCharsInBeat = [str(c).lstrip("@").strip() for c in (beat.get("charactersInShot") or []) if str(c).strip()]
             charsInShot = rawCharsInBeat if rawCharsInBeat else (allowedChars[:1] if allowedChars else [])
@@ -557,7 +610,17 @@ def breakScriptIntoKeyframedShots(scriptText, projectAssets, visualStyle, llmCon
                 refs.append({"asset": f"@{cClean}", "role": "character", "description": cDescEn})
                 charPromptParts.append(f"Character {idxC + 1} ({cDescEn})")
 
-            refs.append({"asset": f"@{locName}", "role": "scene", "description": locDescEn})
+            startPoseEn = extractPureEnglishVisual(beat.get("startPoseEn") or "", eraTag) or "Character in opening pose."
+            actionEn = extractPureEnglishVisual(beat.get("actionEn") or "", eraTag) or "Executes planned dramatic action."
+            endPoseEn = extractPureEnglishVisual(beat.get("endPoseEn") or "", eraTag) or "Character completes action in final pose."
+
+            # 若本镜动作并未涉及启动按钮，从局部环境描述中剥离 red start button，防止拧螺栓特写墙面上凭空画出红按钮
+            shotLocDescEn = locDescEn
+            combinedBeatEn = f"{startPoseEn} {actionEn} {endPoseEn}".lower()
+            if "button" not in combinedBeatEn:
+                shotLocDescEn = re.sub(r",?\s*\bred\s+start\s+button\b", "", shotLocDescEn, flags=re.IGNORECASE).strip(" ,")
+
+            refs.append({"asset": f"@{locName}", "role": "scene", "description": shotLocDescEn})
 
             propPromptParts = []
             for pClean in propsInShot[:2]:
@@ -570,9 +633,6 @@ def breakScriptIntoKeyframedShots(scriptText, projectAssets, visualStyle, llmCon
 
             framing = beat.get("framing") or "Medium shot"
             movement = beat.get("movement") or "Steady camera"
-            startPoseEn = extractPureEnglishVisual(beat.get("startPoseEn") or "", eraTag) or "Character in opening pose."
-            actionEn = extractPureEnglishVisual(beat.get("actionEn") or "", eraTag) or "Executes planned dramatic action."
-            endPoseEn = extractPureEnglishVisual(beat.get("endPoseEn") or "", eraTag) or "Character completes action in final pose."
 
             if len(charsInShot) == 1:
                 castCountRule = "SOLO SHOT (strictly ONLY 1 person visible in frame, no other people in background)."
@@ -589,7 +649,7 @@ def breakScriptIntoKeyframedShots(scriptText, projectAssets, visualStyle, llmCon
 
             baseHeader = (
                 f"Style: {cleanStyleEn}. Camera: {framing}. {castCountRule} "
-                f"Environment: {locDescEn}. {eraRealismRule} "
+                f"Environment: {shotLocDescEn}. {eraRealismRule} "
                 f"Visible Cast: {'; '.join(charPromptParts)}. "
             )
             if propPromptParts:
@@ -758,6 +818,8 @@ def compileLockedKeyframePrompt(shotRow, assets, visualStyle, frameRole="first")
 
     if matchedScenes:
         sDesc = extractPureEnglishVisual(matchedScenes[0].get("visualPrompt") or "", eraTag)
+        if "button" not in poseCleanEn.lower():
+            sDesc = re.sub(r",?\s*\bred\s+start\s+button\b", "", sDesc, flags=re.IGNORECASE).strip(" ,")
         dnaBlocks.append(f"Environment: {sDesc}.")
 
     if matchedProps:

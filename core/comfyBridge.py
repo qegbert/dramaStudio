@@ -36,8 +36,8 @@ from .continuityManager import (
     findFfmpegBinary,
 )
 
-# 强制直连无影云 Tailscale / 局域网地址，绕过系统代理
-os.environ["no_proxy"] = "*"
+# 为无影云端 Tailscale / 局域网地址定制直连 Opener（不污染全局 os.environ["no_proxy"]，以免影响外网 LLM API 访问）
+_DIRECT_HTTP_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 # 云端图片上传去重缓存：{(endpoint, absPath, mtime): uploadedFilename}
 _UPLOADED_IMAGE_CACHE = {}
@@ -58,7 +58,7 @@ def checkComfyStatus():
     endpoint = getSettingValue("comfyEndpoint", "http://127.0.0.1:8188").rstrip("/")
     try:
         req = urllib.request.Request(f"{endpoint}/system_stats", method="GET")
-        with urllib.request.urlopen(req, timeout=3.5) as resp:
+        with _DIRECT_HTTP_OPENER.open(req, timeout=3.5) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             devices = data.get("devices") or []
             gpuName = devices[0].get("name", "GPU") if devices else "Cloud GPU"
@@ -157,7 +157,7 @@ def uploadImageToComfy(imagePath, comfyEndpoint):
                     headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
                     method="POST",
                 )
-                with urllib.request.urlopen(req, timeout=180) as resp:
+                with _DIRECT_HTTP_OPENER.open(req, timeout=180) as resp:
                     resData = json.loads(resp.read().decode("utf-8"))
                     uploadedName = resData.get("name", filename)
                     _UPLOADED_IMAGE_CACHE[cacheKey] = uploadedName
@@ -244,7 +244,7 @@ def buildH3Fl2vaWorkflow(
     width=1344,
     height=768,
     length=124,
-    steps=12,
+    steps=16,
     enableUpscale3d=False,
     seed=None,
 ):
@@ -252,7 +252,7 @@ def buildH3Fl2vaWorkflow(
     构建无影云端 MiniMax-H3 FL2VA (MiniMaxH3ImageToVideo) 首尾帧双锚点工作流：
     - 核心优势：直接将 first_frame 和 last_frame 注入潜空间首尾边界，彻底解决只给参考图导致的
       “动作演一半停住”、“情节表达不出”与“空间透视散架”问题！
-    - 挂载 NBH3HyperStep (Fast - Skip 34 Blocks) 加速模块，兼顾 1344x768 原生高清画质与快速出片；
+    - 使用完整原生 Transformer 块采样（不跳过 34 块），确保大幅度物理动作演进与口型表现力；
     - 直接使用原生 VAEDecode 与 VAEDecodeAudio 解包音画联合 NestedTensor，避免第三方 MinimaxH3LatentUpscalerNode3D
       因调用 NestedTensor.clone() 引发 AttributeError 崩溃。
     """
@@ -270,7 +270,6 @@ def buildH3Fl2vaWorkflow(
         "4": {"class_type": "VAELoader", "inputs": {"vae_name": "minimax_h3_audio_vae_fp32.safetensors"}},
         "5": {"class_type": "MiniMaxH3MemoryEfficientSageAttentionPatch", "inputs": {"model": ["1", 0]}},
         "6": {"class_type": "MiniMaxH3SigmaShift", "inputs": {"model": ["5", 0], "shift_video": 12.0, "shift_audio": 3.0}},
-        "19": {"class_type": "NBH3HyperStep", "inputs": {"model": ["6", 0], "mode": "Fast - Skip 34 Blocks", "write_report": False}},
         "7": {"class_type": "LoadImage", "inputs": {"image": firstFrameUploadedName}},
     }
 
@@ -289,8 +288,8 @@ def buildH3Fl2vaWorkflow(
         i2vInputs["last_frame"] = ["8", 0]
 
     wf["9"] = {"class_type": "MiniMaxH3ImageToVideo", "inputs": i2vInputs}
-    wf["10"] = {"class_type": "BasicGuider", "inputs": {"model": ["19", 0], "conditioning": ["9", 0]}}
-    wf["11"] = {"class_type": "BasicScheduler", "inputs": {"model": ["19", 0], "scheduler": "simple", "steps": int(steps), "denoise": 1.0}}
+    wf["10"] = {"class_type": "BasicGuider", "inputs": {"model": ["6", 0], "conditioning": ["9", 0]}}
+    wf["11"] = {"class_type": "BasicScheduler", "inputs": {"model": ["6", 0], "scheduler": "simple", "steps": int(steps), "denoise": 1.0}}
     wf["12"] = {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "res_multistep"}}
     wf["13"] = {"class_type": "RandomNoise", "inputs": {"noise_seed": seed}}
     wf["14"] = {
@@ -360,7 +359,7 @@ def _submitAndPollComfyWorkflow(workflowDict, comfyEndpoint, expectedType="image
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
-            with urllib.request.urlopen(req, timeout=90) as resp:
+            with _DIRECT_HTTP_OPENER.open(req, timeout=90) as resp:
                 resJson = json.loads(resp.read().decode("utf-8"))
                 promptId = resJson.get("prompt_id")
                 if not promptId:
@@ -378,7 +377,7 @@ def _submitAndPollComfyWorkflow(workflowDict, comfyEndpoint, expectedType="image
         time.sleep(2.5)
         try:
             histReq = urllib.request.Request(f"{endpoint}/history/{promptId}", method="GET")
-            with urllib.request.urlopen(histReq, timeout=25) as histResp:
+            with _DIRECT_HTTP_OPENER.open(histReq, timeout=25) as histResp:
                 histData = json.loads(histResp.read().decode("utf-8"))
         except Exception:
             continue
@@ -412,7 +411,7 @@ def _submitAndPollComfyWorkflow(workflowDict, comfyEndpoint, expectedType="image
                 lastDlErr = None
                 for dlAttempt in range(3):
                     try:
-                        with urllib.request.urlopen(viewUrl, timeout=300) as dlResp:
+                        with _DIRECT_HTTP_OPENER.open(viewUrl, timeout=300) as dlResp:
                             fileBytes = dlResp.read()
                             break
                     except Exception as dlErr:
@@ -914,17 +913,17 @@ def enqueueShotVideoTask(shotId, engineOverride=None):
 
                 engine = engineOverride or shotRow.get("videoEngine") or "h3_fl2va"
                 enableUpscale = str(projRow.get("enableUpscale3d", 0)) == "1"
-                steps = int(getSettingValue("h3SamplingSteps", "12") or 12)
+                steps = max(16, int(getSettingValue("h3SamplingSteps", "16") or 16))
                 frameLength = calculateH3FrameGrid(shotRow.get("durationSec", 5.0))
 
                 if comfyStatus["online"]:
                     upFirst = uploadImageToComfy(firstPath, comfyStatus["endpoint"])
-                    # 默认以首帧潜空间为 100% 物理起点，通过 Target Ending Pose 提示词连续驱动动作演进至尾帧落点，
-                    # 彻底消除两张独立静态图微差引发的第 0.5 秒火光闪变与道具尺寸跳变
-                    useStrictDual = str(getSettingValue("strictDualFrameAnchor", "0")) == "1"
+                    # 动作推进镜 (action_fl2va) 同时挂载同源生成的首帧与尾帧潜空间双锚点，驱动完整大幅度动作弧线；
+                    # 台词博弈镜 (dialogue_i2v) 挂载首帧单锚点，专注于精准中文口型与面部情绪表演
+                    useDualAnchor = str(getSettingValue("strictDualFrameAnchor", "1")) != "0"
                     upLast = (
                         uploadImageToComfy(lastPath, comfyStatus["endpoint"])
-                        if (useStrictDual and lastPath and lastPath.exists() and shotRow.get("shotCategory") == "action_fl2va")
+                        if (useDualAnchor and lastPath and lastPath.exists() and shotRow.get("shotCategory") == "action_fl2va")
                         else None
                     )
 
