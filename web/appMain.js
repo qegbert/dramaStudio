@@ -1709,6 +1709,124 @@ async function submitScriptBreakdown(autoRewriteFirst = false) {
   }
 }
 
+// 流行题材与画面视觉风格预设字典
+const STYLE_PRESETS_MAP = {
+  guoman_3d: {
+    name: "3D国漫玄幻电影级写实",
+    prompt: "3D国漫电影级写实质感 (Masterpiece 3D Chinese xianxia CG animation, top-tier Guoman aesthetic, cinematic IMAX lighting, hyper-detailed 8k texture, Unreal Engine 5 render, ray tracing, Subsurface Scattering (SSS) skin, octane render)",
+  },
+  ethereal_xianxia: {
+    name: "东方唯美仙侠水墨3D",
+    prompt: "东方唯美仙侠3D (Exquisite ethereal Chinese 3D fantasy CG, The Island of Siliang aesthetic, translucent flowing silk fabrics, soft pastel volumetric lighting, ultra-fine delicate facial features, cinematic shallow depth of field, 8k masterpiece render)",
+  },
+  dark_mythic: {
+    name: "中式暗黑悬疑志怪写实",
+    prompt: "中式暗黑悬疑志怪 (Cinematic dark Chinese mythic gothic realism, Black Myth Wukong visual style, volumetric fog, dramatic chiaroscuro contrast, textured historical linen fabric, gritty moody 8k film still)",
+  },
+  film_cinematic: {
+    name: "院线级35mm胶片真人电影",
+    prompt: "院线级35mm胶片实拍电影质感 (Cinematic 35mm film photography, Panavision anamorphic lens, shallow depth of field, natural realistic adult skin pores, atmospheric golden hour rim light, Kodak Vision3 500T color grading, 8k raw photo)",
+  },
+  cyberpunk_heavy: {
+    name: "赛博霓虹与末世重工写实",
+    prompt: "赛博霓虹与末世重工 (Cinematic cyberpunk sci-fi realism, Blade Runner 2049 aesthetic, wet rain-slicked asphalt reflections, volumetric neon rim lighting, detailed weathered mech armor, gritty industrial haze, 8k RED camera capture)",
+  },
+  chang_an_history: {
+    name: "真实古风历史正剧厚重质感",
+    prompt: "写实古风历史正剧质感 (Cinematic historical Chinese period realism, The Longest Day in Chang'an visual style, authentic Tang-Song dynasty textured fabrics, natural daylighting, subdued earth tones, cinematic 8k film still)",
+  },
+  hk_retro_90s: {
+    name: "复古90年代港风胶片",
+    prompt: "复古90年代港风胶片 (1990s Hong Kong cinema aesthetic, Wong Kar-wai color palette, moody green and amber neon shadows, soft halation bloom, subtle film grain, vintage Cooke prime lens, evocative dramatic atmosphere)",
+  },
+  dynamic_anime: {
+    name: "次世代高动态日漫剧场版",
+    prompt: "次世代高动态日漫电影级 (High-end Japanese cinematic anime style, Ufotable aesthetic, Demon Slayer dynamic composition, volumetric particle lighting, clean cel shading, high contrast vivid color grading, 8k anime film frame)",
+  },
+};
+
+function onPresetGenreSelect(genreVal) {
+  if (!genreVal) return;
+  if (genreVal === "custom") {
+    const input = document.getElementById("newProjGenre");
+    input.value = "";
+    input.focus();
+    updateGenrePillsActive("");
+    return;
+  }
+  applyPresetGenre(genreVal);
+}
+
+function applyPresetGenre(genreVal) {
+  const input = document.getElementById("newProjGenre");
+  if (input) {
+    input.value = genreVal;
+  }
+  const sel = document.getElementById("presetGenreSelect");
+  if (sel) {
+    let matched = false;
+    for (let opt of sel.options) {
+      if (opt.value === genreVal) {
+        sel.value = genreVal;
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) sel.value = "custom";
+  }
+  updateGenrePillsActive(genreVal);
+}
+
+function updateGenrePillsActive(genreVal) {
+  const pills = document.querySelectorAll("#genrePillsList .presetPill");
+  pills.forEach((p) => {
+    const onclickStr = p.getAttribute("onclick") || "";
+    if (genreVal && onclickStr.includes(genreVal)) {
+      p.classList.add("active");
+    } else {
+      p.classList.remove("active");
+    }
+  });
+}
+
+function onPresetStyleSelect(styleKey) {
+  if (!styleKey) return;
+  if (styleKey === "custom") {
+    const txt = document.getElementById("newProjStyle");
+    txt.value = "";
+    txt.focus();
+    updateStylePillsActive("");
+    return;
+  }
+  applyPresetStyleKey(styleKey);
+}
+
+function applyPresetStyleKey(styleKey) {
+  const styleObj = STYLE_PRESETS_MAP[styleKey];
+  if (!styleObj) return;
+  const txt = document.getElementById("newProjStyle");
+  if (txt) {
+    txt.value = styleObj.prompt;
+  }
+  const sel = document.getElementById("presetStyleSelect");
+  if (sel) {
+    sel.value = styleKey;
+  }
+  updateStylePillsActive(styleKey);
+}
+
+function updateStylePillsActive(styleKey) {
+  const pills = document.querySelectorAll("#stylePillsList .presetPill");
+  pills.forEach((p) => {
+    const onclickStr = p.getAttribute("onclick") || "";
+    if (styleKey && onclickStr.includes(styleKey)) {
+      p.classList.add("active");
+    } else {
+      p.classList.remove("active");
+    }
+  });
+}
+
 function openNewProjectModal() {
   openDialog("newProjectModal");
 }

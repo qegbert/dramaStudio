@@ -752,19 +752,35 @@ def compileAssetSheetPrompt(assetRow, visualStyle="High-end Chinese 3D CG & live
     cleanStyle = extractPureEnglishVisual(visualStyle, era) or "High-end Chinese 3D CG and live-action cinematic realism"
     cleanDesc = extractPureEnglishVisual(assetRow.get("visualPrompt") or "", era) or "Detailed cinematic subject"
 
+    # 古代/历史/仙侠题材服饰与发型防现代穿越清洗
+    isAncient = not any(k in (visualStyle + " " + era).lower() for k in ["modern", "cyberpunk", "sci-fi", "都市", "现代", "科幻"])
+    ancientAttireGuard = ""
+    if isAncient:
+        cleanDesc = re.sub(r"\b(?:old )?jacket with leather straps\b", "authentic historical Ming dynasty crimson quilted war coat (Yuanyang zhan-ao) with leather waist belt", cleanDesc, flags=re.IGNORECASE)
+        cleanDesc = re.sub(r"\bleather straps\b", "broad dark leather waist sash", cleanDesc, flags=re.IGNORECASE)
+        cleanDesc = re.sub(r"\b(?:padded winter )?(?:work )?jacket\b", "cross-collar padded winter cotton robe", cleanDesc, flags=re.IGNORECASE)
+        cleanDesc = re.sub(r"\bshort (?:grey-black |black )?hair\b", "traditional hair bun tied with a dark cloth kerchief and wooden hairpin", cleanDesc, flags=re.IGNORECASE)
+        ancientAttireGuard = (
+            "Authentic ancient Chinese historical clothing (traditional cross-collar Hanfu robes or Ming dynasty quilted war coats). "
+            "Strictly NO modern clothing, NO modern lapel collars, NO front metal buttons, NO zippers, "
+            "strictly NO modern leather suspenders, NO tactical harness straps, NO modern cargo gear, "
+            "strictly NO modern short crew cut or buzzcut haircuts, traditional topknot hair bun only."
+        )
+
     noTextRule = (
         "Strictly NO text, NO Chinese characters, NO kanji, NO letters, NO helmet labels, "
         "NO nameplates, NO signboards, NO watermarks anywhere in the image."
     )
 
     if aType == "character":
+        guardPart = f" {ancientAttireGuard}" if ancientAttireGuard else ""
         return (
             f"Masterpiece 3D Chinese CG character reference portrait (top-tier Guoman aesthetic), {cleanStyle}. "
-            f"Solo waist-up portrait of 1 person with costume strictly matching identity and era: {cleanDesc}. "
+            f"Solo waist-up portrait of 1 person with costume strictly matching historical identity and setting: {cleanDesc}. "
             "Hands empty at sides (strictly NO weapons or props blocking the chest or face), natural calm expression, "
-            "refined East Asian facial proportions, clean skin texture, "
+            "refined East Asian facial proportions, natural realistic skin texture, "
             "expressive eyes, clean neutral dark blurred background, flattering soft lighting. "
-            f"Strictly NO distorted grimace. {noTextRule}"
+            f"Strictly NO distorted grimace.{guardPart} {noTextRule}"
         )
     if aType == "scene":
         return (

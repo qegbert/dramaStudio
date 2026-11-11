@@ -1411,6 +1411,55 @@ dialog.studioDialog::backdrop {
   border-left-color: var(--rose-err);
 }
 
+/* 流行题材与视觉风格快捷预设样式 */
+.presetSelectRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.presetPillsContainer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.presetPill {
+  font-size: 11.5px;
+  padding: 3px 9px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.16s ease;
+  white-space: nowrap;
+}
+
+.presetPill:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--border-active);
+  color: var(--text-primary);
+  transform: translateY(-1px);
+}
+
+.presetPill.active {
+  background: rgba(14, 165, 233, 0.18);
+  border-color: var(--cyan-monitor);
+  color: var(--cyan-monitor);
+  font-weight: 600;
+}
+
+.presetHintText {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  line-height: 1.4;
+}
+
 @keyframes toastSlideIn {
   from {
     opacity: 0;

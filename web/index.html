@@ -353,12 +353,67 @@
         <input id="newProjTitle" class="formInput" placeholder="例如：风雪孤驿 / 星港机甲师" />
       </div>
       <div class="formGroup">
-        <label for="newProjGenre">题材类型</label>
-        <input id="newProjGenre" class="formInput" value="古风/修仙/硬核逆袭" />
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+          <label for="newProjGenre" style="font-weight:600;">🔥 题材类型（支持选择热门预设或自由输入）</label>
+          <span style="font-size:11px; color:var(--text-muted);">影响剧本爽点拆解与戏剧冲突节奏</span>
+        </div>
+        <div class="presetSelectRow">
+          <select id="presetGenreSelect" class="formSelect" onchange="onPresetGenreSelect(this.value)" style="flex:1;">
+            <option value="">✨ 点击选择目前流行热门题材...</option>
+            <option value="古风/修仙/硬核逆袭" selected>🔥 古风 / 修仙 / 硬核逆袭（凡人流·炼器炼丹·立誓赌约）</option>
+            <option value="现代都市/战神归来/隐形神豪">⚡ 现代都市 / 战神归来 / 隐形神豪（龙王殿·打脸反转·千亿身家）</option>
+            <option value="中式暗黑/民国悬疑/志怪奇案">🏮 中式暗黑 / 民国悬疑 / 志怪奇案（九叔道术·纸扎降魔·民国诡事）</option>
+            <option value="末世废土/极寒天灾/无限庇护所">❄️ 末世废土 / 极寒天灾 / 无限庇护所（极寒冰封·空间囤货·安全堡垒）</option>
+            <option value="科幻重工/星际战舰/赛博修真">🚀 科幻重工 / 星际战舰 / 赛博修真（重型机甲·深空拓荒·义体飞升）</option>
+            <option value="古装权谋/重生嫡女/凤临天下">👑 古装权谋 / 重生嫡女 / 凤临天下（大女主·深宫夺权·绝杀复仇）</option>
+            <option value="都市高武/灵气复苏/全民转职">🔮 都市高武 / 灵气复苏 / 全民转职（神级异能·深渊裂缝·神级抽卡）</option>
+            <option value="悬疑犯罪/孤勇卧底/生死博弈">🔫 悬疑犯罪 / 孤勇卧底 / 生死博弈（港风警匪·暗夜潜伏·高智商博弈）</option>
+            <option value="custom">✏️ 自定义题材...</option>
+          </select>
+        </div>
+        <div class="presetPillsContainer" id="genrePillsList">
+          <span class="presetPill active" onclick="applyPresetGenre('古风/修仙/硬核逆袭')">古风修仙</span>
+          <span class="presetPill" onclick="applyPresetGenre('现代都市/战神归来/隐形神豪')">都市战神</span>
+          <span class="presetPill" onclick="applyPresetGenre('中式暗黑/民国悬疑/志怪奇案')">中式暗黑志怪</span>
+          <span class="presetPill" onclick="applyPresetGenre('末世废土/极寒天灾/无限庇护所')">末世天灾</span>
+          <span class="presetPill" onclick="applyPresetGenre('科幻重工/星际战舰/赛博修真')">科幻机甲</span>
+          <span class="presetPill" onclick="applyPresetGenre('古装权谋/重生嫡女/凤临天下')">古装大女主</span>
+          <span class="presetPill" onclick="applyPresetGenre('都市高武/灵气复苏/全民转职')">都市高武</span>
+        </div>
+        <input id="newProjGenre" class="formInput" style="margin-top:6px;" value="古风/修仙/硬核逆袭" placeholder="可自由修改或补充题材关键词" />
       </div>
+
       <div class="formGroup">
-        <label for="newProjStyle">画面视觉风格</label>
-        <input id="newProjStyle" class="formInput" value="3D国漫电影级写实质感 (High-end Chinese 3D CG & live-action realism)" />
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+          <label for="newProjStyle" style="font-weight:600;">🎨 画面视觉风格（支持选择流行画风提示词，可微调）</label>
+          <span style="font-size:11px; color:var(--text-muted);">内置高权重工业级中英文提示词</span>
+        </div>
+        <div class="presetSelectRow">
+          <select id="presetStyleSelect" class="formSelect" onchange="onPresetStyleSelect(this.value)" style="flex:1;">
+            <option value="">✨ 点击选择目前主流爆款视觉风格提示词...</option>
+            <option value="guoman_3d" selected>🐉 3D国漫玄幻电影级写实（《完美世界》《凡人修仙传》院线CG·UE5质感）</option>
+            <option value="ethereal_xianxia">🌸 东方唯美仙侠水墨3D（《眷思量》《沧元图》清冷精致·丝绸飘逸）</option>
+            <option value="dark_mythic">🖤 中式暗黑悬疑志怪写实（《黑神话·悟空》水墨重彩厚涂·体积雾）</option>
+            <option value="film_cinematic">🎬 院线级35mm胶片真人电影（写实人像毛孔质感·柯达电影布光）</option>
+            <option value="cyberpunk_heavy">🦾 赛博霓虹与末世重工写实（《银翼杀手2049》科幻机甲·雨夜倒影）</option>
+            <option value="chang_an_history">🏮 真实古风历史正剧厚重质感（《长安十二时辰》沉稳色调·历史考究服化道）</option>
+            <option value="hk_retro_90s">🎞️ 复古90年代港风胶片（王家卫经典色调·暗夜霓虹·微醺颗粒感）</option>
+            <option value="dynamic_anime">⚡ 次世代高动态日漫剧场版（《鬼灭之刃》Ufotable电影级粒子光影）</option>
+            <option value="custom">✏️ 自定义视觉风格提示词...</option>
+          </select>
+        </div>
+        <div class="presetPillsContainer" id="stylePillsList">
+          <span class="presetPill active" onclick="applyPresetStyleKey('guoman_3d')">3D国漫玄幻</span>
+          <span class="presetPill" onclick="applyPresetStyleKey('ethereal_xianxia')">唯美仙侠CG</span>
+          <span class="presetPill" onclick="applyPresetStyleKey('dark_mythic')">中式暗黑志怪</span>
+          <span class="presetPill" onclick="applyPresetStyleKey('film_cinematic')">35mm电影胶片</span>
+          <span class="presetPill" onclick="applyPresetStyleKey('cyberpunk_heavy')">赛博重工机甲</span>
+          <span class="presetPill" onclick="applyPresetStyleKey('chang_an_history')">历史古风正剧</span>
+          <span class="presetPill" onclick="applyPresetStyleKey('hk_retro_90s')">90年代港风</span>
+          <span class="presetPill" onclick="applyPresetStyleKey('dynamic_anime')">热血剧场日漫</span>
+        </div>
+        <textarea id="newProjStyle" class="promptTextarea" style="min-height:76px; margin-top:6px; font-size:12px; font-family:var(--font-mono); line-height:1.45;" placeholder="画面视觉风格提示词（中英文均可，将自动注入每一个分镜画面）">3D国漫电影级写实质感 (Masterpiece 3D Chinese xianxia CG animation, top-tier Guoman aesthetic, cinematic IMAX lighting, hyper-detailed 8k texture, Unreal Engine 5 render, ray tracing, Subsurface Scattering (SSS) skin, octane render)</textarea>
+        <div class="presetHintText">💡 该画风提示词将作为全局视觉基调，自动锁定角色定妆、场景空间与所有分镜生成，可直接在上方框内微调。</div>
       </div>
       <div class="formGroup">
         <label for="newProjRatio">画面比例</label>
