@@ -233,24 +233,25 @@ def _callLlmForSceneLedger(novelText, existingAssets, visualStyle, llmConfig):
         "2. 【保留核心走向，重组短剧爽点递进链】：\n"
         "   - 严格保留原著主线脉络（如：灵炉回火暴走危机 → 反派管事问罪逼迫 → 主角凭宗师经验一眼点破『火蓝透绿是水路堵了』 → 反派嘲讽 → 主角当场砸裂废锄亮出半指厚水垢铁证 → 当众扳动风门将蓝绿妖火压回樱红灵焰震慑全场 → 按下印信立十日赌约 → 结尾捻出断口最里层的『人为新垢』锁定幕后黑手悬念）。\n"
         "   - 将原本枯燥隐晦的技术说明或心理活动，全部改写为直观强烈、富有视觉奇观的当场戏剧动作！\n"
-        "3. 【角色与场景 3D 国漫高颜值美型化（告别灰暗土气与现代工具穿帮）】：\n"
-        "   - 严禁将主角或配角写成『灰头土脸、满脸煤灰、瘦弱佝偻、油腻歪嘴』！\n"
-        "   - 提取 `character` 资产时，必须升级为《眷思量》《诛仙》级高颜值 3D 国漫形象：主角须俊朗挺拔、剑眉星目、瓷白细腻肌肤（`19-year-old handsome East Asian young master craftsman, 180cm tall, flawless smooth fair porcelain skin, sharp sword eyebrows and bright starry eyes, neat high ponytail, wearing clean tailored dark-cyan ancient craftsman tunic with leather bracers, hands empty at sides`）；反派须威严华贵、气场冷傲（`imposing plump middle-aged sect steward in luxurious dark-purple and gold embroidered brocade robe, fair skin, haughty dignified expression, hands empty at sides`）。\n"
-        "   - 提取 `scene` 资产时，必须描写恢弘整洁的仙门建筑空间（如 `Grand ancient Chinese xianxia sect forging pavilion interior, towering dragon-carved bronze spirit furnace set in the mid-ground, clean swept dark stone slab floor, carved timber pillars, warm architectural lighting`），严禁写 `scattered with broken...`、`debris`、`rubble`、`tool walls`、`wooden tool racks`（防止生图模型在地上画满垃圾碎渣或在墙上挂满现代五金工具）！\n"
-        "   - 古风/修仙场景下严禁出现 `wrench`、`spanner`、`valve`、`bolt` 等现代机械词汇！风门机关统一写为古代青铜龙头推拉闸杆（`ancient bronze dragon-head sliding lever mounted on the furnace side`）。\n"
-        "   - 严禁让人物手部悬空冒火或手搓火球！灵火必须且只能从青铜灵炉的炉膛口内部（`solely inside the bronze furnace chamber mouth`）喷涌或燃烧。\n"
+        "3. 【角色五官高颜值 + 服饰/季节/环境 100% 严格贴合当前剧本设定（严禁张冠李戴）】：\n"
+        "   - 角色的面部五官必须符合 3D 国漫审美（五官立体端正、骨骼匀称、眼神鲜明、皮肤干净清晰），但【角色的服饰材质、款式、厚薄与配饰必须 100% 严格依据当前输入小说原文的时代背景、季节气候与真实身份处境】！\n"
+        "   - 严禁照抄任何固定模板服饰！必须仔细阅读当前剧本原文：\n"
+        "     * 若原文是寒冬风雪/流放边塞（如明初辽东雪灾中的废藩庶子、老管家）：必须穿符合当朝代与严冬气候的厚实冬装（如原文写『漏棉旧袄、麻鞋』，则必须写为 `worn padded winter cotton robe with frayed seams over coarse winter inner tunic, hemp shoes`；原文写『掉毛羊皮袄』则写为 `weathered sheepskin-lined winter coat`），绝不能在冰天雪地里穿单薄夏衣或修仙工匠服！\n"
+        "     * 若原文是古风铸坊烧炉学徒/杂役：必须穿符合底层劳作设定的粗麻交领短褐工衣、挽袖缠麻布护腕、粗布腰带，绝不能穿丝绸华服或镶金玉带！\n"
+        "     * 若原文是宗门管事/军官/权贵：按原文对应的品级描写管事袍、边军旧甲或华服。\n"
+        "   - 提取 `scene` 资产时，必须 100% 还原当前剧本的真实时代与气候环境（如边塞寒冬雪院、修仙铸坊大殿等），地面与空间布局必须干净合理，严禁写 `scattered with broken...`、`debris`、`rubble`、`tool walls`、`wooden tool racks`！\n"
+        "   - 古代/修仙场景下严禁出现 `wrench`、`spanner`、`valve`、`bolt` 等现代机械词汇！严禁让人物手部悬空冒火或手搓火球！\n"
         "4. 【严格锁定 180° 空间对视轴线（杜绝证件照式正脸发呆）】：\n"
-        "   - 同一场戏内必须锁死左右站位轴线：主角始终位于画面左侧 3/4 侧身朝向画面右侧（`positioned on screen-left angled 3/4 facing screen-right`），对手/反派始终位于画面右侧 3/4 侧身朝向画面左侧（`positioned on screen-right angled 3/4 facing screen-left`）。\n"
+        "   - 同一场戏内必须锁死左右站位轴线：主角始终位于画面左侧 3/4 侧身朝向画面右侧（`positioned on screen-left angled 3/4 facing screen-right`），对手/配角始终位于画面右侧 3/4 侧身朝向画面左侧（`positioned on screen-right angled 3/4 facing screen-left`）。\n"
         "   - 在每个节拍的 `startPoseEn` 和 `endPoseEn` 中必须显式写出该站位与视线朝向！\n"
         "5. 【同角色跨镜头动作首尾咬合锁（保障视频无缝接力）】：\n"
         "   - 同一角色在场内第 2、3、4 次出场时，其 `startPoseCn` 与 `startPoseEn` 必须严格承接该角色上一次出场镜头的 `endPoseCn` 与 `endPoseEn`（以 `Continuing directly from his previous ending pose...` 开头），并将 `lockFromPrevEnd` 设为 1，让前后镜头动作如一镜到底般顺滑咬合！\n"
         "6. 【全集单人主导正反打 · 短剧黄金节奏（精选 7~8 个高燃镜头）】：\n"
-        "   - 为保障 3D 国漫人物五官颜值精度、口型 100% 准确以及跨镜头真实视频尾帧无缝接力，所有节拍必须严格采用【单人主导构图 (SOLO SHOT)】！每个节拍的 `charactersInShot` 数组严格只填 1 个当前镜头核心角色（如 `[\"鲁大川\"]` 或 `[\"曹胖子\"]`），绝不在同一镜头里混入两个人！\n"
-        "   - 核心高光动作（如：一锤砸裂废锄亮出半指水垢、亲手扳动风门将蓝绿妖火压回樱红灵焰、在状纸上重重按下红手印、捻起断口最里层新垢）必须全部由主角单人一气呵成完成，在 `startPoseEn`、`actionEn`、`endPoseEn` 中只描写当前这 1 个角色的连续动作！\n"
-        "   - 每个节拍的 `dialogue` 数组最多只能有 1 句台词（控制在 10~22 字以内，保留原著如『那火蓝里透绿，是水路堵了！』『废灵根也配论火？』『这坯不是烧废的，是堵废的！』『要复火，先压回樱红。』『十日后，火不会说谎。』『三年老垢是慢病，里头这层新垢……是谁把黑手伸进了水路！』等灵魂金句）。\n"
-        "   - 全集严格精选 7~8 个刀刀见血的高浓度镜头，彻底砍掉注水过渡戏！\n"
+        "   - 为保障 3D 国漫人物五官颜值精度、口型 100% 准确以及跨镜头真实视频尾帧无缝接力，所有节拍必须严格采用【单人主导构图 (SOLO SHOT)】！每个节拍的 `charactersInShot` 数组严格只填 1 个当前镜头核心角色，绝不在同一镜头里混入两个人！\n"
+        "   - 核心高光动作必须全部由当前镜头角色单人一气呵成完成，在 `startPoseEn`、`actionEn`、`endPoseEn` 中只描写当前这 1 个角色的连续动作！\n"
+        "   - 每个节拍的 `dialogue` 数组最多只能有 1 句台词（控制在 10~22 字以内，保留原著最提气的灵魂金句）。全集严格精选 7~8 个刀刀见血的高浓度镜头！\n"
         "7. 【高振幅连续物理动作 & 纯英文视觉描述】：\n"
-        "   - 每个节拍的 `actionEn` 必须包含饱满具体的物理动作动词与光影变化；所有 `*En` 与 `visualPrompt` 字段必须为 100% 纯英文（严禁夹杂中文或拼音名字，统一用外貌衣着指代人物，如 `the handsome young craftsman in dark-cyan tunic`、`the plump steward in purple-gold brocade robe`）。\n"
+        "   - 每个节拍的 `actionEn` 必须包含饱满具体的物理动作动词与光影变化；所有 `*En` 与 `visualPrompt` 字段必须为 100% 纯英文（严禁夹杂中文或拼音名字，统一用符合该角色当前剧本真实服饰设定的英文短语指代人物）。\n"
         "只输出合法 JSON 对象，格式如下：\n"
         "{\n"
         '  "extractedAssets": [{"assetType":"character|scene|prop", "name":"准确中文名称", "roleTag":"身份/用途", "eraTag":"前世|今生|通用", "visualPrompt":"Pure English detailed visual prompt (strictly no Chinese characters inside visualPrompt)", "voiceProfile":"声线特征"}],\n'
@@ -758,19 +759,19 @@ def compileAssetSheetPrompt(assetRow, visualStyle="High-end Chinese 3D CG & live
 
     if aType == "character":
         return (
-            f"Masterpiece 3D Chinese xianxia CG character reference portrait (top-tier Guoman beauty aesthetic like The Island of Siliang and Jade Dynasty), {cleanStyle}. "
-            f"Solo waist-up portrait of 1 stunningly attractive person: {cleanDesc}. "
-            "Hands empty at sides (strictly NO weapons or props blocking the chest or face), natural calm neutral expression, "
-            "refined delicate East Asian facial proportions, flawless smooth fair porcelain skin with soft subsurface scattering, "
-            "luminous expressive eyes, silky hair strands, clean neutral dark blurred background, flattering soft butterfly lighting. "
-            f"Strictly NO rough skin pores, NO oily skin, NO deep wrinkles, NO distorted grimace. {noTextRule}"
+            f"Masterpiece 3D Chinese CG character reference portrait (top-tier Guoman aesthetic), {cleanStyle}. "
+            f"Solo waist-up portrait of 1 person with costume strictly matching identity and era: {cleanDesc}. "
+            "Hands empty at sides (strictly NO weapons or props blocking the chest or face), natural calm expression, "
+            "refined East Asian facial proportions, clean skin texture, "
+            "expressive eyes, clean neutral dark blurred background, flattering soft lighting. "
+            f"Strictly NO distorted grimace. {noTextRule}"
         )
     if aType == "scene":
         return (
-            f"Masterpiece 3D Chinese xianxia CG architectural environment concept art, empty establishing wide shot with NO people, {cleanStyle}. "
-            f"Environment details: {cleanDesc}. "
-            "Grand palace-grade spatial depth, clean swept dark stone slab floor, majestic carved bronze and timber architecture, consistent light source direction, atmospheric volumetric lighting, 8k resolution. "
-            f"Strictly NO scattered floor trash or debris, NO modern open-end wrenches, NO modern industrial tools. {noTextRule}"
+            f"Masterpiece 3D Chinese CG environment concept art, empty establishing wide shot with NO people, {cleanStyle}. "
+            f"Environment details strictly matching script setting: {cleanDesc}. "
+            "Clear spatial depth, consistent light source direction, atmospheric volumetric lighting, 8k resolution. "
+            f"Strictly NO modern open-end wrenches, NO modern industrial tools. {noTextRule}"
         )
     return (
         f"Hero prop studio close-up reference, {cleanStyle}. "
@@ -838,29 +839,63 @@ def compileLockedKeyframePrompt(shotRow, assets, visualStyle, frameRole="first")
             break
     poseCleanEn = extractPureEnglishVisual(poseText, eraTag)
 
-    # 将动作句中的拼音角色名替换为带明确服装外貌特征的英文指代，防止多人同框时穿错衣服或变成双胞胎
+    # 将动作句中的拼音角色名或旧版不符设定的华服描述替换为符合当前身份设定的粗布工衣/管事袍/破棉袄英文指代
     nameAliasMap = {
-        r"\bLu Dachuan in the past life\b": "the handsome young master craftsman in tailored dark-cyan ancient tunic",
-        r"\bLu Dachuan in this life\b": "the 19-year-old handsome East Asian young master craftsman in tailored dark-cyan ancient tunic",
-        r"\bLu Dachuan\b": "the 19-year-old handsome East Asian young master craftsman in tailored dark-cyan ancient tunic",
-        r"\bCao Pangzi\b": "the imposing plump sect steward in luxurious dark-purple and gold brocade robe",
-        r"\bSteward Cao\b": "the imposing plump sect steward in luxurious dark-purple and gold brocade robe",
-        r"\bCao\b": "the imposing plump sect steward in luxurious dark-purple and gold brocade robe",
-        r"\bXiao Shitou\b": "the 16-year-old clean-cut teenage apprentice in slate-blue short tunic",
+        r"\bLu Dachuan in the past life\b": "the handsome young furnace apprentice in coarse ash-brown linen work tunic with hemp wrist wraps",
+        r"\bLu Dachuan in this life\b": "the 19-year-old handsome East Asian young furnace apprentice in coarse ash-brown linen work tunic with hemp wrist wraps",
+        r"\bLu Dachuan\b": "the 19-year-old handsome East Asian young furnace apprentice in coarse ash-brown linen work tunic with hemp wrist wraps",
+        r"\bthe handsome young craftsman in dark-cyan tunic\b": "the resolute handsome East Asian young scholar-craftsman in faded coarse patched winter coat",
+        r"\bclean tailored dark-cyan ancient craftsman tunic with leather bracers\b": "humble coarse patched cross-collar winter work coat with frayed hem, hemp cloth wrist wraps, and a simple cloth waist sash",
+        r"\bCao Pangzi\b": "the 40-year-old rotund male sect forge overseer in dark espresso-brown overseer robe",
+        r"\bSteward Cao\b": "the 40-year-old rotund male sect forge overseer in dark espresso-brown overseer robe",
+        r"\bCao\b": "the 40-year-old rotund male sect forge overseer in dark espresso-brown overseer robe",
+        r"\bthe plump steward in purple-gold brocade robe\b": "the 40-year-old rotund male sect forge overseer in dark espresso-brown overseer robe",
+        r"\bluxurious dark-purple and gold(?: embroidered)? brocade robe\b": "dark espresso-brown silk-cotton sect overseer robe with subtle bronze cloud trim",
+        r"\bXiao Shitou\b": "the 16-year-old clean-cut teenage boy apprentice in patched light-gray coarse cotton short jacket",
+        r"\bZhu Chen\b": "the 22-year-old resolute handsome East Asian young scholar in humble patched dark-teal winter coat with cloth belt",
+        r"\bWang Shuan\b": "the 60-year-old weathered loyal old servant in worn threadbare sheepskin vest over faded coarse robe",
+        r"\bZhang Desheng\b": "the 45-year-old distressed grain steward in drab padded winter jacket, face flushed purple from freezing cold",
+        r"\bLi Qianhu messenger\b": "the 50-year-old hardened veteran soldier messenger in dark-red military tunic with snow dusting shoulders",
+        r"\bflawless smooth fair porcelain skin\b": "natural realistic adult skin with subtle cold-weather pale complexion, masculine resolute features, strictly NO heavy makeup",
+        r"\bstanding upright with calm confident posture\b": "",
+        r"\bhands empty at sides\b": "",
     }
     for pat, repl in nameAliasMap.items():
         poseCleanEn = re.sub(pat, repl, poseCleanEn, flags=re.IGNORECASE)
 
+    # 视线与 180° 机位防穿帮检测：若分镜设定了侧身对视，强制注入“严禁直视镜头/影楼摆拍”约束
+    gazeLock = ""
+    lowerPose = poseCleanEn.lower()
+    if "facing screen-right" in lowerPose or "toward screen-right" in lowerPose or "screen-left" in lowerPose:
+        gazeLock = (
+            "Cinematic 3/4 angle side profile, character gaze directed strictly toward screen-right at their scene partner off-camera. "
+            "Eyes focused across the room, strictly NO direct eye contact with the camera, NOT looking at the viewer, NO photostudio model posing."
+        )
+    elif "facing screen-left" in lowerPose or "toward screen-left" in lowerPose or "screen-right" in lowerPose:
+        gazeLock = (
+            "Cinematic 3/4 angle side profile, character gaze directed strictly toward screen-left at their scene partner off-camera. "
+            "Eyes focused across the room, strictly NO direct eye contact with the camera, NOT looking at the viewer, NO photostudio model posing."
+        )
+
     dnaBlocks = [f"Cinematic film frame, {cleanStyle}, {framing}."]
+
+    def _sanitizeCharacterPrompt(promptStr):
+        """清洗角色资产中的立绘站姿与油腻爱豆词，保证分镜动作具有最高优先级"""
+        p = extractPureEnglishVisual(promptStr or "", eraTag)
+        p = re.sub(r",?\s*\bstanding upright with calm confident posture\b", "", p, flags=re.IGNORECASE)
+        p = re.sub(r",?\s*\bhands empty at sides\b", "", p, flags=re.IGNORECASE)
+        p = re.sub(r"\bflawless smooth fair porcelain skin\b", "natural realistic adult skin, authentic masculine bone structure, subtle cold-weather complexion, strictly NO effeminate idol makeup", p, flags=re.IGNORECASE)
+        p = re.sub(r"\bclean tailored dark-cyan ancient craftsman tunic with leather bracers\b", "faded coarse patched cross-collar winter work coat with frayed hem, hemp wrist wraps", p, flags=re.IGNORECASE)
+        return p.strip(" ,")
 
     if len(matchedChars) == 1:
         c = matchedChars[0]
-        cDesc = extractPureEnglishVisual(c.get("visualPrompt") or "", eraTag)
+        cDesc = _sanitizeCharacterPrompt(c.get("visualPrompt"))
         dnaBlocks.append(f"SOLO SHOT of ONLY 1 person in frame (strictly no other people visible): {cDesc}.")
     elif len(matchedChars) >= 2:
         chList = []
         for idx, c in enumerate(matchedChars[:3]):
-            cDesc = extractPureEnglishVisual(c.get("visualPrompt") or "", eraTag)
+            cDesc = _sanitizeCharacterPrompt(c.get("visualPrompt"))
             posHint = "on screen-left" if idx == 0 else ("on screen-right" if idx == 1 else "in background")
             chList.append(f"Person {idx + 1} ({posHint}): {cDesc}")
         dnaBlocks.append(f"Exactly {len(matchedChars[:3])} distinct people in frame: {'; '.join(chList)}.")
@@ -884,9 +919,14 @@ def compileLockedKeyframePrompt(shotRow, assets, visualStyle, frameRole="first")
     else:
         dnaBlocks.append(f"Action & Composition: {poseCleanEn}.")
 
+    if gazeLock:
+        dnaBlocks.append(gazeLock)
+
+    # 动态构建高级工业防穿帮与画质增强底护（杜绝影楼摆拍、杜绝直视镜头、杜绝文字乱码）
     dnaBlocks.append(
-        "Masterpiece 3D Guoman beauty aesthetic, flawless smooth fair skin, refined attractive East Asian facial features, clean swept ancient stone floor, "
-        "strictly NO modern open-end wrench or spanner, NO scattered floor trash, NO glowing hands or magic flames on hands (fire only inside the bronze furnace mouth), "
+        "Cinematic narrative realism, authentic textured fabrics with realistic wrinkles and wear, subtle breath vapor in cold air, natural volumetric lighting, "
+        "strictly candid cinematic still, strictly NO direct camera stare, NO smiling at lens, NO glamour beauty filter, NO effeminate fashion model posing, "
+        "strictly NO modern tools, NO open-end wrenches or spanners, NO glowing hands, "
         "strictly NO text, NO Chinese characters, NO signboards, NO nameplates, NO helmet labels, NO watermarks."
     )
     return " ".join(dnaBlocks)
