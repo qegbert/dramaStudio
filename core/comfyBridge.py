@@ -173,24 +173,28 @@ def buildFlux3KeyframeWorkflow(
     promptText,
     width=1472,
     height=832,
-    steps=16,
+    steps=26,
+    guidance=3.5,
     seed=None,
     referenceUploadedNames=None,
     initImageUploadedName=None,
     denoise=1.0,
 ):
     """
-    构建无影云端 Flux3-Klein 高清关键帧生成工作流：
-    1. 在负向条件中强制屏蔽中文文字、标牌、刺绣字、拉链、水印、幼童化与现代穿帮元素；
-    2. 支持挂载 1~2 张 ReferenceLatent 潜空间参考图：
-       - 生成首帧时：挂载本镜出场角色的定妆设定图，100% 锁定演员面部五官、发型与服装；
-       - 生成尾帧时：挂载本镜刚生成的首帧图像，并支持将首帧作为初始潜空间基底，100% 锁定同一机位、同一背景陈设与人物基础姿态。
+    构建无影云端 Flux3-Klein 高清工业级关键帧与定妆图生成工作流：
+    1. 注入 FluxGuidance (默认 3.5) 核心引导节点，彻底激活高阶微观皮肤毛孔、骨相立体度与服饰纹理；
+    2. 采样步数由 16 步全面提升至 26 步，配合 beta 调度器实现高频细节完美收敛；
+    3. 在负向条件中强力封杀塑料假脸、娃娃脸、畸变五官、中文乱码与现代穿帮元素；
+    4. 支持挂载 1~2 张 ReferenceLatent 潜空间参考图（锁定角色外貌与服装）。
     """
     if not seed or seed < 0:
         seed = random.randint(1, 2147483647)
     negText = (
-        "text, Chinese characters, kanji, hanzi, signboard, nameplate, helmet label, plaque text, "
-        "embroidered letters, chest badge, metal zipper, modern zipper, watermark, subtitle, logo, "
+        "plastic skin, doll face, mannequin, smooth fake porcelain face, heavy makeup, 3d render plastic sheen, "
+        "deformed eyes, misaligned pupils, cross-eyed, deformed fingers, extra fingers, mutated hands, bad anatomy, "
+        "amateur drawing, blurry, low resolution, oversaturated, text, Chinese characters, kanji, hanzi, signboard, "
+        "nameplate, helmet label, plaque text, embroidered letters, chest badge, metal zipper, modern zipper, "
+        "modern jacket, modern suspenders, modern tactical harness, modern buttons, watermark, subtitle, logo, "
         "child, kid, toddler, modern rubber boots, modern steel valve wheel"
     )
     wf = {
@@ -199,6 +203,7 @@ def buildFlux3KeyframeWorkflow(
         "3": {"class_type": "VAELoader", "inputs": {"vae_name": "flux2-vae.safetensors"}},
         "4": {"class_type": "CLIPTextEncode", "inputs": {"text": promptText, "clip": ["2", 0]}},
         "5": {"class_type": "CLIPTextEncode", "inputs": {"text": negText, "clip": ["2", 0]}},
+        "40": {"class_type": "FluxGuidance", "inputs": {"conditioning": ["4", 0], "guidance": float(guidance)}},
     }
 
     if initImageUploadedName:
@@ -207,7 +212,7 @@ def buildFlux3KeyframeWorkflow(
     else:
         wf["6"] = {"class_type": "EmptyLatentImage", "inputs": {"width": width, "height": height, "batch_size": 1}}
 
-    posCondOut = ["4", 0]
+    posCondOut = ["40", 0]
     refList = [r for r in (referenceUploadedNames or []) if r]
     for idx, upName in enumerate(refList[:2]):
         loadNodeId = str(20 + idx * 3)
@@ -222,10 +227,10 @@ def buildFlux3KeyframeWorkflow(
         "class_type": "KSampler",
         "inputs": {
             "seed": seed,
-            "steps": steps,
+            "steps": int(steps),
             "cfg": 1.0,
             "sampler_name": "euler",
-            "scheduler": "simple",
+            "scheduler": "beta",
             "denoise": float(denoise),
             "model": ["1", 0],
             "positive": posCondOut,
@@ -617,7 +622,7 @@ def enqueueAssetImageTask(assetId):
                 comfyStatus = checkComfyStatus()
                 if not comfyStatus["online"]:
                     raise RuntimeError(f"云端 ComfyUI 算力服务未在线 ({comfyStatus.get('endpoint')})，已拒绝生成本地假设定图")
-                wf = buildFlux3KeyframeWorkflow(promptText, width=width, height=height, steps=16, seed=freshSeed)
+                wf = buildFlux3KeyframeWorkflow(promptText, width=width, height=height, steps=26, guidance=3.5, seed=freshSeed)
                 _, kfUrl, kfPath = _submitAndPollComfyWorkflow(wf, comfyStatus["endpoint"], expectedType="image")
                 localName = f"asset_ref_{assetId}_{int(time.time()*1000)}.png"
                 assetDest = ASSETS_DIR / localName
