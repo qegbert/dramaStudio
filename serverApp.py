@@ -254,8 +254,13 @@ class StudioRequestHandler(BaseHTTPRequestHandler):
                 return self.serveStaticFile(webFile)
 
             return self.sendJson({"error": f"未知路径: {path}"}, 404)
+        except (BrokenPipeError, ConnectionResetError):
+            return
         except Exception as err:
-            return self.sendJson({"ok": False, "error": str(err)}, 500)
+            try:
+                return self.sendJson({"ok": False, "error": str(err)}, 500)
+            except (BrokenPipeError, ConnectionResetError):
+                return
 
     def do_POST(self):
         parsed = urlparse(self.path)
@@ -307,6 +312,39 @@ class StudioRequestHandler(BaseHTTPRequestHandler):
                     conn.commit()
                 return self.sendJson({"ok": True, "projectId": projectId, "episodeId": episodeId})
 
+            mNewEpisode = re.match(r"^/api/projects/(\d+)/episodes$", path)
+            if mNewEpisode:
+                projectId = int(mNewEpisode.group(1))
+                now = time.time()
+                with closing(getDbConnection()) as conn:
+                    proj = conn.execute("SELECT id FROM projects WHERE id=?", (projectId,)).fetchone()
+                    if not proj:
+                        return self.sendJson({"error": "短剧项目不存在"}, 404)
+                    maxRow = conn.execute(
+                        "SELECT COALESCE(MAX(episodeNumber), 0) AS maxNum FROM episodes WHERE projectId=?",
+                        (projectId,),
+                    ).fetchone()
+                    nextNum = int(body.get("episodeNumber") or (int(maxRow["maxNum"] or 0) + 1))
+                    epTitle = str(body.get("title") or f"第 {nextNum} 集").strip()
+                    novelText = str(body.get("novelContent") or "").strip()
+                    epCur = conn.execute(
+                        """
+                        INSERT INTO episodes (projectId, episodeNumber, title, novelContent, scriptContent, sceneLedgerJson, masterVideoUrl, createdAt, updatedAt)
+                        VALUES (?, ?, ?, ?, '', '[]', '', ?, ?)
+                        """,
+                        (projectId, nextNum, epTitle, novelText, now, now),
+                    )
+                    episodeId = epCur.lastrowid
+                    conn.execute("UPDATE projects SET updatedAt=? WHERE id=?", (now, projectId))
+                    conn.commit()
+                return self.sendJson({
+                    "ok": True,
+                    "projectId": projectId,
+                    "episodeId": episodeId,
+                    "episodeNumber": nextNum,
+                    "title": epTitle,
+                })
+
             mRewrite = re.match(r"^/api/episodes/(\d+)/rewriteScript$", path)
             if mRewrite:
                 episodeId = int(mRewrite.group(1))
@@ -327,14 +365,6 @@ class StudioRequestHandler(BaseHTTPRequestHandler):
                 }
                 rewritten = rewriteNovelToSceneLedger(novelText, assets, proj["visualStyle"], llmConfig)
                 extractedList = rewritten.get("extractedAssets") or []
-                if extractedList:
-                    # 清理尚未生成定妆图的旧草稿资产，防止多次点击改写时产生同义不同名的重复资产
-                    with closing(getDbConnection()) as conn:
-                        conn.execute(
-                            "DELETE FROM assets WHERE projectId=? AND (imageUrl IS NULL OR imageUrl='')",
-                            (ep["projectId"],),
-                        )
-                        conn.commit()
                 assetCountChanged = upsertExtractedAssets(ep["projectId"], extractedList)
                 sceneLedger = rewritten.get("sceneLedger") or []
                 formattedScript = rewritten.get("formattedScript") or ""
@@ -372,9 +402,10 @@ class StudioRequestHandler(BaseHTTPRequestHandler):
                     "model": settings.get("llmModel", "deepseek-chat"),
                 }
 
-                # 若尚未生成场次空间调度账本，或用户要求先同步执行三阶改写，自动先生成账本与补全资产
+                # 默认每次拆分镜都重新调用 AI 生成场次空间调度账本；
+                # 仅当前端刚在同一流程中完成 rewriteScript（reuseLedger=True）时才复用刚生成的账本，避免重复调用
                 sceneLedger = []
-                if not body.get("forceRewrite"):
+                if body.get("reuseLedger"):
                     try:
                         sceneLedger = json.loads(ep["sceneLedgerJson"] or "[]")
                     except Exception:
@@ -444,6 +475,7 @@ class StudioRequestHandler(BaseHTTPRequestHandler):
                     "ok": True,
                     "shotCount": len(plannedShots),
                     "sceneCount": len(sceneLedger),
+                    "formattedScript": formattedScript or novelOrScript,
                 })
 
             mShotUpdate = re.match(r"^/api/shots/(\d+)/update$", path)

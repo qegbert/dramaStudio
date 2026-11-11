@@ -40,6 +40,7 @@
       <div>
         <div class="sectionHeader">
           <span class="sectionTitle">🎞️ 2. 选择当前剧集</span>
+          <button class="btn btnSmall btnCyan" style="padding:2px 8px; font-size:11px;" onclick="openNewEpisodeModal()" title="在当前短剧项目下新建下一集（自动共享已锁定的角色与场景定妆）">➕ 新建集数</button>
         </div>
         <select id="episodeSelect" class="projectSelect" aria-label="选择剧集" onchange="onEpisodeChange(this.value)"></select>
       </div>
@@ -373,6 +374,37 @@
       <div style="display:flex; justify-content:flex-end; gap:10px;">
         <button class="btn" onclick="closeModal('newProjectModal')">取消</button>
         <button class="btn btnPrimary" onclick="submitNewProject()">创建项目</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- 原生 <dialog> 2.5：在当前短剧项目下新建其它集数 -->
+  <dialog id="newEpisodeModal" class="studioDialog" closedby="any" aria-labelledby="newEpDialogTitle">
+    <div class="dialogInner">
+      <div class="sectionHeader">
+        <span id="newEpDialogTitle" style="font-size:15px; font-weight:700;">🎞️ 新建剧集（沿用当前短剧角色与场景定妆）</span>
+        <button class="btn btnSmall" onclick="closeModal('newEpisodeModal')">✕</button>
+      </div>
+      <div style="font-size:12px; color:var(--emerald-ok); background:rgba(16,185,129,0.08); padding:8px 10px; border-radius:6px; border:1px solid rgba(16,185,129,0.25);">
+        🔒 新建集数将自动共享当前短剧已锁定的【角色定妆照 + 场景设定图 + 关键道具】，确保跨集人物外貌 100% 统一不变脸！
+      </div>
+      <div style="display:grid; grid-template-columns:120px 1fr; gap:10px;">
+        <div class="formGroup">
+          <label for="newEpNumber">第几集</label>
+          <input id="newEpNumber" type="number" min="1" class="formInput" value="2" />
+        </div>
+        <div class="formGroup">
+          <label for="newEpTitle">本集标题</label>
+          <input id="newEpTitle" class="formInput" placeholder="例如：第 2 集：夜探炉底" />
+        </div>
+      </div>
+      <div class="formGroup">
+        <label for="newEpNovel">本集小说原文 / 剧情内容（可选，创建后可自动由 AI 按短剧特性改写剧本）</label>
+        <textarea id="newEpNovel" class="promptTextarea" style="min-height:150px;" placeholder="在这里粘贴新的一集小说原文或剧情大纲（留空也可先创建空集数，稍后在「第 ① 步」中粘贴）..."></textarea>
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:10px;">
+        <button class="btn" onclick="closeModal('newEpisodeModal')">取消</button>
+        <button class="btn btnPrimary" onclick="submitNewEpisode()">➕ 创建并切换到该集</button>
       </div>
     </div>
   </dialog>

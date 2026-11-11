@@ -351,10 +351,13 @@ function renderEpisodeSelector(episodes, activeId) {
     return;
   }
   sel.innerHTML = episodes
-    .map(
-      (ep) =>
-        `<option value="${ep.id}" ${ep.id === activeId ? "selected" : ""}>第 ${ep.episodeNumber} 集：${escapeHtml(ep.title)}</option>`
-    )
+    .map((ep) => {
+      const rawTitle = String(ep.title || "").trim();
+      const label = rawTitle.startsWith("第")
+        ? rawTitle
+        : `第 ${ep.episodeNumber} 集：${rawTitle}`;
+      return `<option value="${ep.id}" ${ep.id === activeId ? "selected" : ""}>${escapeHtml(label)}</option>`;
+    })
     .join("");
 }
 
@@ -1616,6 +1619,8 @@ async function submitScriptBreakdown(autoRewriteFirst = false) {
   setScriptButtonsBusy(true, autoRewriteFirst ? "auto" : "breakdown");
 
   try {
+    // 标记本次流程是否已刚完成 AI 改写；若已改写，第二步直接复用刚生成的账本，避免重复调用 AI
+    let justRewrote = false;
     // 如果用户点击「一键全自动」或者右侧还没有分场剧本，先显式执行第一步改写并实时展示在右栏
     if (autoRewriteFirst || !scriptText) {
       startScriptProgressTracker([
@@ -1649,19 +1654,22 @@ async function submitScriptBreakdown(autoRewriteFirst = false) {
       scriptText = rewriteRes.formattedScript || scriptText;
       document.getElementById("scriptInputArea").value = scriptText;
       document.getElementById("rewriteStatusBadge").textContent = `✅ 已生成 ${rewriteRes.sceneCount} 场剧本（提取 ${rewriteRes.assetCountChanged} 项资产）`;
+      justRewrote = true;
     }
 
-    // 紧接着执行第二步：拆解首尾关键帧分镜表
+    // 紧接着执行第二步：拆解首尾关键帧分镜表（未刚改写时，此步会调用 AI 重新生成分场账本，耗时较长）
     startScriptProgressTracker([
       {
         afterSec: 0,
-        pillIndex: 4,
-        basePct: 62,
-        title: "全自动拆解 (2/2)：正在按分场剧本拆解逐镜「首尾关键帧」故事板...",
+        pillIndex: justRewrote ? 4 : 1,
+        basePct: justRewrote ? 62 : 10,
+        title: justRewrote
+          ? "全自动拆解 (2/2)：正在按分场剧本拆解逐镜「首尾关键帧」故事板..."
+          : "AI 拆分镜：正在调用大模型重新生成分场调度账本（约 2~3 分钟）...",
         sub: "正在为每一镜规划：0.0s 起点画面提示词、中间物理运动轨迹、动作结果落点画面与角色台词...",
       },
       {
-        afterSec: 3.5,
+        afterSec: justRewrote ? 3.5 : 120,
         pillIndex: 4,
         basePct: 82,
         title: "全自动拆解 (2/2)：正在配置前后镜头衔接锁 (Frame Lock) 与声学约束...",
@@ -1671,8 +1679,12 @@ async function submitScriptBreakdown(autoRewriteFirst = false) {
 
     const res = await apiFetch(`/api/episodes/${currentState.activeEpisodeId}/breakScript`, {
       method: "POST",
-      body: JSON.stringify({ novelContent: novelText, scriptContent: scriptText }),
+      body: JSON.stringify({ novelContent: novelText, scriptContent: scriptText, reuseLedger: justRewrote }),
     });
+    // AI 重新生成的分场剧本同步回填到右栏
+    if (res.formattedScript) {
+      document.getElementById("scriptInputArea").value = res.formattedScript;
+    }
 
     finishScriptProgressTracker(
       true,
@@ -1730,6 +1742,54 @@ async function submitNewProject() {
     }
   } catch (err) {
     showToast(`创建项目失败: ${err.message}`, "error");
+  }
+}
+
+function openNewEpisodeModal() {
+  if (!currentState.activeProjectId) {
+    showToast("请先选择或新建一个短剧项目", "error");
+    return;
+  }
+  const episodes = (currentState.workspace && currentState.workspace.episodes) || [];
+  const maxNum = episodes.reduce((acc, ep) => Math.max(acc, Number(ep.episodeNumber) || 0), 0);
+  const nextNum = maxNum + 1;
+  const numInput = document.getElementById("newEpNumber");
+  const titleInput = document.getElementById("newEpTitle");
+  const novelInput = document.getElementById("newEpNovel");
+  if (numInput) numInput.value = String(nextNum);
+  if (titleInput) titleInput.value = `第 ${nextNum} 集`;
+  if (novelInput) novelInput.value = "";
+  openDialog("newEpisodeModal");
+}
+
+async function submitNewEpisode() {
+  if (!currentState.activeProjectId) {
+    showToast("请先选择一个短剧项目", "error");
+    return;
+  }
+  const epNum = Number(document.getElementById("newEpNumber").value) || 1;
+  const title = document.getElementById("newEpTitle").value.trim() || `第 ${epNum} 集`;
+  const novelContent = document.getElementById("newEpNovel").value.trim();
+  try {
+    const res = await apiFetch(`/api/projects/${currentState.activeProjectId}/episodes`, {
+      method: "POST",
+      body: JSON.stringify({
+        episodeNumber: epNum,
+        title,
+        novelContent,
+      }),
+    });
+    closeModal("newEpisodeModal");
+    await loadWorkspace(currentState.activeProjectId, res.episodeId);
+    if (novelContent.length > 0) {
+      showToast(`已创建《${res.title}》，正在由 AI 按短剧特性改写剧本并复用已有角色定妆...`, "info");
+      openScriptModal(false);
+      await submitNovelRewrite();
+    } else {
+      showToast(`已创建《${res.title}》！可点击「第 ① 步」粘贴本集小说并拆解分镜`, "success");
+    }
+  } catch (err) {
+    showToast(`创建新集数失败: ${err.message}`, "error");
   }
 }
 

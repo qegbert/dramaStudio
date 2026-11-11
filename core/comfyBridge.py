@@ -32,6 +32,7 @@ from .directorPlanner import (
 from .continuityManager import (
     resolveMediaUrlToPath,
     syncEpisodeFrameLocks,
+    extractHighResLastFrameFromVideo,
     inspectVideoQuality,
     findFfmpegBinary,
 )
@@ -270,6 +271,7 @@ def buildH3Fl2vaWorkflow(
         "4": {"class_type": "VAELoader", "inputs": {"vae_name": "minimax_h3_audio_vae_fp32.safetensors"}},
         "5": {"class_type": "MiniMaxH3MemoryEfficientSageAttentionPatch", "inputs": {"model": ["1", 0]}},
         "6": {"class_type": "MiniMaxH3SigmaShift", "inputs": {"model": ["5", 0], "shift_video": 12.0, "shift_audio": 3.0}},
+        "60": {"class_type": "NBH3HyperStep", "inputs": {"model": ["6", 0], "mode": "Fast - Skip 34 Blocks", "write_report": False}},
         "7": {"class_type": "LoadImage", "inputs": {"image": firstFrameUploadedName}},
     }
 
@@ -288,8 +290,8 @@ def buildH3Fl2vaWorkflow(
         i2vInputs["last_frame"] = ["8", 0]
 
     wf["9"] = {"class_type": "MiniMaxH3ImageToVideo", "inputs": i2vInputs}
-    wf["10"] = {"class_type": "BasicGuider", "inputs": {"model": ["6", 0], "conditioning": ["9", 0]}}
-    wf["11"] = {"class_type": "BasicScheduler", "inputs": {"model": ["6", 0], "scheduler": "simple", "steps": int(steps), "denoise": 1.0}}
+    wf["10"] = {"class_type": "BasicGuider", "inputs": {"model": ["60", 0], "conditioning": ["9", 0]}}
+    wf["11"] = {"class_type": "BasicScheduler", "inputs": {"model": ["60", 0], "scheduler": "simple", "steps": int(steps), "denoise": 1.0}}
     wf["12"] = {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "res_multistep"}}
     wf["13"] = {"class_type": "RandomNoise", "inputs": {"noise_seed": seed}}
     wf["14"] = {
@@ -613,17 +615,15 @@ def enqueueAssetImageTask(assetId):
                 freshSeed = random.randint(1, 2147483647)
 
                 comfyStatus = checkComfyStatus()
-                if comfyStatus["online"]:
-                    wf = buildFlux3KeyframeWorkflow(promptText, width=width, height=height, steps=16, seed=freshSeed)
-                    _, kfUrl, kfPath = _submitAndPollComfyWorkflow(wf, comfyStatus["endpoint"], expectedType="image")
-                    localName = f"asset_ref_{assetId}_{int(time.time()*1000)}.png"
-                    assetDest = ASSETS_DIR / localName
-                    shutil.copy2(str(kfPath), str(assetDest))
-                    imgUrl = f"/media/assets/{localName}"
-                    modeNote = f"@{assetRow['name']} 云端定妆设定图已生成"
-                else:
-                    imgUrl = _generateLocalFallbackAssetImage(assetRow, width=width, height=height)
-                    modeNote = f"@{assetRow['name']} 本地预演设定图已生成"
+                if not comfyStatus["online"]:
+                    raise RuntimeError(f"云端 ComfyUI 算力服务未在线 ({comfyStatus.get('endpoint')})，已拒绝生成本地假设定图")
+                wf = buildFlux3KeyframeWorkflow(promptText, width=width, height=height, steps=16, seed=freshSeed)
+                _, kfUrl, kfPath = _submitAndPollComfyWorkflow(wf, comfyStatus["endpoint"], expectedType="image")
+                localName = f"asset_ref_{assetId}_{int(time.time()*1000)}.png"
+                assetDest = ASSETS_DIR / localName
+                shutil.copy2(str(kfPath), str(assetDest))
+                imgUrl = f"/media/assets/{localName}"
+                modeNote = f"@{assetRow['name']} 云端定妆设定图已生成"
 
                 with closing(getDbConnection()) as conn:
                     conn.execute(
@@ -648,32 +648,36 @@ def enqueueAssetImageTask(assetId):
 
 
 def _collectShotCharacterRefUploads(shotRow, projectAssets, comfyEndpoint):
-    """收集本镜出场角色已生成的定妆照并上传至云端（利用内存缓存0.0006s瞬发复用），作为 ReferenceLatent 锁死演员长相"""
+    """
+    收集本镜出场角色定妆照并上传至云端：
+    仅将角色定妆照作为 ReferenceLatent 注入 Flux3-Klein（绝不将广角场景空镜图塞入 ReferenceLatent，
+    防止 Flux3 将场景空镜当成固定壁纸把人物像贴纸一样合成在前景、锁死景别与炉火动态状态）。
+    """
     assetMap = {str(a.get("name", "")).lstrip("@").strip(): a for a in (projectAssets or [])}
     try:
         refs = json.loads(shotRow.get("referenceAssetsJson") or "[]")
     except Exception:
         refs = []
-    uploadedNames = []
+    charUploads = []
     for r in refs:
         if not isinstance(r, dict):
             continue
         aName = str(r.get("asset", "")).lstrip("@").strip()
         aObj = assetMap.get(aName)
-        if aObj and aObj.get("assetType") == "character" and aObj.get("imageUrl"):
-            imgUrl = str(aObj["imageUrl"])
-            # 跳过旧版遗留的带文字乱码定妆图 (_1793949)
-            if "_1793949" in imgUrl:
-                continue
-            localPath = resolveMediaUrlToPath(imgUrl)
-            if localPath and localPath.exists():
-                try:
-                    upName = uploadImageToComfy(localPath, comfyEndpoint)
-                    if upName and upName not in uploadedNames:
-                        uploadedNames.append(upName)
-                except Exception:
-                    pass
-    return uploadedNames[:2]
+        if not aObj or aObj.get("assetType") != "character" or not aObj.get("imageUrl"):
+            continue
+        imgUrl = str(aObj["imageUrl"])
+        if "_1793949" in imgUrl:
+            continue
+        localPath = resolveMediaUrlToPath(imgUrl)
+        if localPath and localPath.exists():
+            try:
+                upName = uploadImageToComfy(localPath, comfyEndpoint)
+                if upName and upName not in charUploads:
+                    charUploads.append(upName)
+            except Exception:
+                pass
+    return charUploads[:2]
 
 
 def enqueueKeyframeTask(shotId, frameRole="both", forceRegenerate=True):
@@ -688,9 +692,6 @@ def enqueueKeyframeTask(shotId, frameRole="both", forceRegenerate=True):
         shot = conn.execute("SELECT * FROM shots WHERE id=?", (shotId,)).fetchone()
         if not shot:
             raise ValueError("未找到指定镜头")
-        # 若用户显式要求重画起点帧 (frameRole=='first') 或强制重画，解除 lockFromPrevEnd 以免被上一镜旧图覆盖
-        if forceRegenerate and frameRole in ("first", "both") and int(shot["lockFromPrevEnd"] or 0) == 1:
-            conn.execute("UPDATE shots SET lockFromPrevEnd=0, updatedAt=? WHERE id=?", (now, shotId))
         conn.execute(
             """
             INSERT INTO renderTasks (id, projectId, episodeId, shotId, taskType, engineName, status, phaseText, createdAt, updatedAt)
@@ -718,8 +719,7 @@ def enqueueKeyframeTask(shotId, frameRole="both", forceRegenerate=True):
                     shotRow = dict(conn.execute("SELECT * FROM shots WHERE id=?", (shotId,)).fetchone())
                     projRow = dict(conn.execute("SELECT * FROM projects WHERE id=?", (shotRow["projectId"],)).fetchone())
 
-                if not forceRegenerate:
-                    syncEpisodeFrameLocks(shotRow["episodeId"], overwriteExisting=False)
+                syncEpisodeFrameLocks(shotRow["episodeId"], overwriteExisting=True)
                 with closing(getDbConnection()) as conn:
                     shotRow = dict(conn.execute("SELECT * FROM shots WHERE id=?", (shotId,)).fetchone())
                     projectAssets = [dict(a) for a in conn.execute("SELECT * FROM assets WHERE projectId=?", (shotRow["projectId"],))]
@@ -731,57 +731,40 @@ def enqueueKeyframeTask(shotId, frameRole="both", forceRegenerate=True):
                 firstUrl = shotRow.get("firstFrameUrl") or ""
                 lastUrl = shotRow.get("lastFrameUrl") or ""
 
-                needFirst = frameRole in ("first", "both") and (
-                    forceRegenerate or not (int(shotRow.get("lockFromPrevEnd") or 0) == 1 and firstUrl)
-                )
+                needFirst = frameRole in ("first", "both") and not (int(shotRow.get("lockFromPrevEnd") or 0) == 1 and firstUrl)
                 needLast = frameRole in ("last", "both") and (shotRow.get("shotCategory") == "action_fl2va" or frameRole == "last")
 
                 lockedFirstPrompt = compileLockedKeyframePrompt(shotRow, projectAssets, projRow.get("visualStyle", ""), frameRole="first")
                 lockedLastPrompt = compileLockedKeyframePrompt(shotRow, projectAssets, projRow.get("visualStyle", ""), frameRole="last")
 
-                if comfyStatus["online"]:
-                    epUrl = comfyStatus["endpoint"]
-                    charRefUploads = _collectShotCharacterRefUploads(shotRow, projectAssets, epUrl)
-                    firstPathLocal = resolveMediaUrlToPath(firstUrl) if firstUrl else None
+                if not comfyStatus["online"]:
+                    raise RuntimeError(f"云端 ComfyUI 算力服务未在线 ({comfyStatus.get('endpoint')})，已拒绝生成本地假关键帧")
 
-                    if needFirst:
-                        wf1 = buildFlux3KeyframeWorkflow(
-                            lockedFirstPrompt,
-                            width=width,
-                            height=height,
-                            seed=sharedSeed,
-                            referenceUploadedNames=charRefUploads,
-                        )
-                        _, firstUrl, firstPathLocal = _submitAndPollComfyWorkflow(wf1, epUrl, expectedType="image")
+                epUrl = comfyStatus["endpoint"]
+                charRefUploads = _collectShotCharacterRefUploads(shotRow, projectAssets, epUrl)
+                firstPathLocal = resolveMediaUrlToPath(firstUrl) if firstUrl else None
 
-                    if needLast:
-                        # 尾帧优先以本镜首帧作为 ReferenceLatent 潜空间参考，100% 锁死同机位、同背景、同演员与同姿态基底
-                        lastRefs = []
-                        if firstPathLocal and Path(firstPathLocal).exists():
-                            try:
-                                upFirst = uploadImageToComfy(firstPathLocal, epUrl)
-                                if upFirst:
-                                    lastRefs = [upFirst]
-                            except Exception:
-                                lastRefs = charRefUploads
-                        else:
-                            lastRefs = charRefUploads
+                if needFirst:
+                    wf1 = buildFlux3KeyframeWorkflow(
+                        lockedFirstPrompt,
+                        width=width,
+                        height=height,
+                        seed=sharedSeed,
+                        referenceUploadedNames=charRefUploads,
+                    )
+                    _, firstUrl, firstPathLocal = _submitAndPollComfyWorkflow(wf1, epUrl, expectedType="image")
 
-                        wf2 = buildFlux3KeyframeWorkflow(
-                            lockedLastPrompt,
-                            width=width,
-                            height=height,
-                            seed=sharedSeed,
-                            referenceUploadedNames=lastRefs,
-                        )
-                        _, lastUrl, _ = _submitAndPollComfyWorkflow(wf2, epUrl, expectedType="image")
-                    modeNote = "无影云端 Flux3-Klein 渲染完成（已挂载定妆图与首尾帧同源潜空间锁）"
-                else:
-                    if needFirst:
-                        firstUrl = _generateLocalFallbackKeyframe(shotRow, "first", width=width, height=height)
-                    if needLast:
-                        lastUrl = _generateLocalFallbackKeyframe(shotRow, "last", width=width, height=height)
-                    modeNote = "云端未开机，已生成本地高清预演关键帧 (Previz)"
+                if needLast:
+                    # 尾帧仅挂载角色定妆图并使用独立种子，避免把首帧作为 ReferenceLatent 导致尾帧与首帧姿势 99% 重合
+                    wf2 = buildFlux3KeyframeWorkflow(
+                        lockedLastPrompt,
+                        width=width,
+                        height=height,
+                        seed=sharedSeed + 10007,
+                        referenceUploadedNames=charRefUploads,
+                    )
+                    _, lastUrl, _ = _submitAndPollComfyWorkflow(wf2, epUrl, expectedType="image")
+                modeNote = "无影云端 Flux3-Klein 渲染完成（已挂载定妆图与首尾帧同源潜空间锁）"
 
                 with closing(getDbConnection()) as conn:
                     newStatus = "keyframes_ready" if (firstUrl or lastUrl) else shotRow["status"]
@@ -854,56 +837,38 @@ def enqueueShotVideoTask(shotId, engineOverride=None):
                     shotRow = dict(conn.execute("SELECT * FROM shots WHERE id=?", (shotId,)).fetchone())
                     projRow = dict(conn.execute("SELECT * FROM projects WHERE id=?", (shotRow["projectId"],)).fetchone())
 
-                # 1. 同步上一镜尾帧帧锁
-                syncEpisodeFrameLocks(shotRow["episodeId"])
+                # 1. 同步上一镜（或同角色前序镜头）真实视频尾帧帧锁
+                syncEpisodeFrameLocks(shotRow["episodeId"], overwriteExisting=True)
                 with closing(getDbConnection()) as conn:
                     shotRow = dict(conn.execute("SELECT * FROM shots WHERE id=?", (shotId,)).fetchone())
                     projectAssets = [dict(a) for a in conn.execute("SELECT * FROM assets WHERE projectId=?", (shotRow["projectId"],))]
 
                 vWidth, vHeight = getAspectRatioDimensions(projRow.get("aspectRatio", "16:9"), isVideo=True)
                 comfyStatus = checkComfyStatus()
+                if not comfyStatus["online"]:
+                    raise RuntimeError(f"云端 ComfyUI 算力服务未在线 ({comfyStatus.get('endpoint')})，已拒绝生成本地静态推拉假视频")
 
                 # 2. 确保首帧（以及动作推进镜的尾帧）就绪，并强制注入锁定的角色/场景/道具 DNA 与 ReferenceLatent
                 firstUrl = shotRow.get("firstFrameUrl") or ""
                 lastUrl = shotRow.get("lastFrameUrl") or ""
-                # 自动识别并淘汰旧版遗留的带中文标牌乱码关键帧 (时间戳早于 1793954000)
-                if firstUrl and any(oldTag in firstUrl for oldTag in ("_1793949", "_1793950")):
+                # 自动识别并淘汰旧版遗留的带中文标牌乱码关键帧或离线假关键帧
+                if firstUrl and any(oldTag in firstUrl for oldTag in ("_1793949", "_1793950", "_179436178")):
                     firstUrl = ""
                     lastUrl = ""
-                charRefUploads = _collectShotCharacterRefUploads(shotRow, projectAssets, comfyStatus["endpoint"]) if comfyStatus["online"] else []
+                charRefUploads = _collectShotCharacterRefUploads(shotRow, projectAssets, comfyStatus["endpoint"])
                 sharedKfSeed = random.randint(1, 2147483647)
                 if not firstUrl:
-                    if comfyStatus["online"]:
-                        lockedFirst = compileLockedKeyframePrompt(shotRow, projectAssets, projRow.get("visualStyle", ""), frameRole="first")
-                        wfFirst = buildFlux3KeyframeWorkflow(lockedFirst, width=vWidth, height=vHeight, seed=sharedKfSeed, referenceUploadedNames=charRefUploads)
-                        _, firstUrl, _ = _submitAndPollComfyWorkflow(wfFirst, comfyStatus["endpoint"], expectedType="image")
-                    else:
-                        firstUrl = _generateLocalFallbackKeyframe(shotRow, "first", width=vWidth, height=vHeight)
-
-                if shotRow.get("shotCategory") == "action_fl2va" and not lastUrl:
-                    if comfyStatus["online"]:
-                        lockedLast = compileLockedKeyframePrompt(shotRow, projectAssets, projRow.get("visualStyle", ""), frameRole="last")
-                        fPathForLast = resolveMediaUrlToPath(firstUrl) if firstUrl else None
-                        lastRefs = []
-                        if fPathForLast and fPathForLast.exists():
-                            try:
-                                lastRefs = [uploadImageToComfy(fPathForLast, comfyStatus["endpoint"])]
-                            except Exception:
-                                lastRefs = charRefUploads
-                        else:
-                            lastRefs = charRefUploads
-                        wfLast = buildFlux3KeyframeWorkflow(lockedLast, width=vWidth, height=vHeight, seed=sharedKfSeed, referenceUploadedNames=lastRefs)
-                        _, lastUrl, _ = _submitAndPollComfyWorkflow(wfLast, comfyStatus["endpoint"], expectedType="image")
-                    else:
-                        lastUrl = _generateLocalFallbackKeyframe(shotRow, "last", width=vWidth, height=vHeight)
+                    lockedFirst = compileLockedKeyframePrompt(shotRow, projectAssets, projRow.get("visualStyle", ""), frameRole="first")
+                    wfFirst = buildFlux3KeyframeWorkflow(lockedFirst, width=vWidth, height=vHeight, seed=sharedKfSeed, referenceUploadedNames=charRefUploads)
+                    _, firstUrl, _ = _submitAndPollComfyWorkflow(wfFirst, comfyStatus["endpoint"], expectedType="image")
 
                 with closing(getDbConnection()) as conn:
                     conn.execute(
-                        "UPDATE shots SET firstFrameUrl=?, lastFrameUrl=?, updatedAt=? WHERE id=?",
-                        (firstUrl, lastUrl, time.time(), shotId),
+                        "UPDATE shots SET firstFrameUrl=?, updatedAt=? WHERE id=?",
+                        (firstUrl, time.time(), shotId),
                     )
                     conn.execute(
-                        "UPDATE renderTasks SET phaseText='正在上传首尾关键帧至无影云端...', updatedAt=? WHERE id=?",
+                        "UPDATE renderTasks SET phaseText='正在上传首帧关键帧至无影云端...', updatedAt=? WHERE id=?",
                         (time.time(), taskId),
                     )
                     conn.commit()
@@ -913,61 +878,53 @@ def enqueueShotVideoTask(shotId, engineOverride=None):
 
                 engine = engineOverride or shotRow.get("videoEngine") or "h3_fl2va"
                 enableUpscale = str(projRow.get("enableUpscale3d", 0)) == "1"
-                steps = max(16, int(getSettingValue("h3SamplingSteps", "16") or 16))
+                steps = max(12, int(getSettingValue("h3SamplingSteps", "12") or 12))
                 frameLength = calculateH3FrameGrid(shotRow.get("durationSec", 5.0))
 
-                if comfyStatus["online"]:
-                    upFirst = uploadImageToComfy(firstPath, comfyStatus["endpoint"])
-                    # 动作推进镜 (action_fl2va) 同时挂载同源生成的首帧与尾帧潜空间双锚点，驱动完整大幅度动作弧线；
-                    # 台词博弈镜 (dialogue_i2v) 挂载首帧单锚点，专注于精准中文口型与面部情绪表演
-                    useDualAnchor = str(getSettingValue("strictDualFrameAnchor", "1")) != "0"
-                    upLast = (
-                        uploadImageToComfy(lastPath, comfyStatus["endpoint"])
-                        if (useDualAnchor and lastPath and lastPath.exists() and shotRow.get("shotCategory") == "action_fl2va")
-                        else None
+                upFirst = uploadImageToComfy(firstPath, comfyStatus["endpoint"])
+                # 默认以首帧单锚点 + 高动态动作提示词驱动 MiniMax-H3，避免静态生图的尾帧把人物动作锁死在原地；
+                # 视频渲染完成后会自动抽取视频真实尾帧写入 lastFrameUrl
+                useDualAnchor = str(getSettingValue("strictDualFrameAnchor", "0")) == "1"
+                upLast = (
+                    uploadImageToComfy(lastPath, comfyStatus["endpoint"])
+                    if (useDualAnchor and lastPath and lastPath.exists() and shotRow.get("shotCategory") == "action_fl2va")
+                    else None
+                )
+
+                with closing(getDbConnection()) as conn:
+                    conn.execute(
+                        "UPDATE renderTasks SET phaseText='关键帧已锁定，正在提交视频扩散模型渲染...', updatedAt=? WHERE id=?",
+                        (time.time(), taskId),
                     )
+                    conn.commit()
 
-                    with closing(getDbConnection()) as conn:
-                        conn.execute(
-                            "UPDATE renderTasks SET phaseText='关键帧已锁定，正在提交视频扩散模型渲染...', updatedAt=? WHERE id=?",
-                            (time.time(), taskId),
-                        )
-                        conn.commit()
-
-                    if engine == "wan22_moe":
-                        compiledPrompt = compileWan22VideoPrompt(shotRow)
-                        wfVideo = buildWan22MoeWorkflow(
-                            compiledPrompt,
-                            upFirst,
-                            width=1280 if vWidth >= vHeight else 720,
-                            height=720 if vWidth >= vHeight else 1280,
-                            numFrames=81,
-                            steps=20,
-                        )
-                    else:
-                        compiledPrompt = compileFl2vaVideoPrompt(shotRow, hasLastFrame=bool(upLast))
-                        wfVideo = buildH3Fl2vaWorkflow(
-                            compiledPrompt,
-                            upFirst,
-                            lastFrameUploadedName=upLast,
-                            width=vWidth,
-                            height=vHeight,
-                            length=frameLength,
-                            steps=steps,
-                            enableUpscale3d=enableUpscale,
-                        )
-
-                    promptId, videoUrl, videoLocalPath = _submitAndPollComfyWorkflow(
-                        wfVideo, comfyStatus["endpoint"], expectedType="video"
+                if engine == "wan22_moe":
+                    compiledPrompt = compileWan22VideoPrompt(shotRow)
+                    wfVideo = buildWan22MoeWorkflow(
+                        compiledPrompt,
+                        upFirst,
+                        width=1280 if vWidth >= vHeight else 720,
+                        height=720 if vWidth >= vHeight else 1280,
+                        numFrames=81,
+                        steps=20,
                     )
-                    phaseSummary = f"无影云端 {engine} 渲染完成"
                 else:
-                    compiledPrompt = compileFl2vaVideoPrompt(shotRow, hasLastFrame=bool(lastPath))
-                    videoUrl, videoLocalPath = _generateLocalFallbackVideo(
-                        shotRow, firstPath, lastPath, width=vWidth, height=vHeight
+                    compiledPrompt = compileFl2vaVideoPrompt(shotRow, hasLastFrame=bool(upLast))
+                    wfVideo = buildH3Fl2vaWorkflow(
+                        compiledPrompt,
+                        upFirst,
+                        lastFrameUploadedName=upLast,
+                        width=vWidth,
+                        height=vHeight,
+                        length=frameLength,
+                        steps=steps,
+                        enableUpscale3d=enableUpscale,
                     )
-                    promptId = "local_previz"
-                    phaseSummary = "云端未开机，已生成首尾帧动态分镜预演视频 (Animatic Previz)"
+
+                promptId, videoUrl, videoLocalPath = _submitAndPollComfyWorkflow(
+                    wfVideo, comfyStatus["endpoint"], expectedType="video"
+                )
+                phaseSummary = f"无影云端 {engine} 渲染完成"
 
                 # 3. 执行 Auto-QC 视频质检
                 qcReport = inspectVideoQuality(videoLocalPath)
@@ -978,8 +935,22 @@ def enqueueShotVideoTask(shotId, engineOverride=None):
 
                 with closing(getDbConnection()) as conn:
                     conn.execute(
-                        "UPDATE shots SET videoUrl=?, qcReportJson=?, status='completed', updatedAt=? WHERE id=?",
+                        "UPDATE shots SET videoUrl=?, qcReportJson=?, updatedAt=? WHERE id=?",
                         (videoUrl, json.dumps(qcReport, ensure_ascii=False), time.time(), shotId),
+                    )
+                    conn.commit()
+
+                # 4. 自动从真实生成的视频末尾抽取高清尾帧并触发后续镜头的连续性帧锁更新
+                try:
+                    extractHighResLastFrameFromVideo(shotId)
+                except Exception as exErr:
+                    print(f"[comfyBridge] 提取视频末尾帧警告 (shotId={shotId}): {exErr}")
+                syncEpisodeFrameLocks(shotRow["episodeId"], overwriteExisting=True)
+
+                with closing(getDbConnection()) as conn:
+                    conn.execute(
+                        "UPDATE shots SET status='completed', updatedAt=? WHERE id=?",
+                        (time.time(), shotId),
                     )
                     conn.execute(
                         """
@@ -990,9 +961,6 @@ def enqueueShotVideoTask(shotId, engineOverride=None):
                         (phaseSummary, promptId, videoUrl, json.dumps(qcReport, ensure_ascii=False), time.time(), taskId),
                     )
                     conn.commit()
-
-                # 4. 触发后续镜头的连续性帧锁更新
-                syncEpisodeFrameLocks(shotRow["episodeId"])
         except Exception as err:
             with closing(getDbConnection()) as conn:
                 conn.execute("UPDATE shots SET status='failed', updatedAt=? WHERE id=?", (time.time(), shotId))

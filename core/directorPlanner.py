@@ -225,23 +225,32 @@ def _callLlmForSceneLedger(novelText, existingAssets, visualStyle, llmConfig):
     )
 
     systemPrompt = (
-        "你是一位顶级商业爆款短剧总导演与金牌编剧。请将输入的小说原文改写为【高张力商业短剧分场剧本 + 场次空间调度账本 (Scene Blocking & State Ledger)】并提取核心资产。\n"
-        "必须严格遵守以下 8 条商业短剧工业铁律：\n"
-        "1. 【黄金前3秒生死爆点开局 (Cold Open Hook)】：严禁温吞水式慢节奏开场！第1场第1镜必须在0.5秒内切入生死危机或剧烈冲突（例如：烘干塔回火焦糊黑烟喷涌、鲁大川猛力拧死螺栓骤闻异味变色，紧接着第2镜嘶吼『赶紧断电！』而学徒慌乱误拍启动钮引发烈焰气浪迎面吞噬），绝不能磨蹭铺垫！\n"
-        "2. 【一镜一单人台词 · 严格正反打 (Shot / Reverse-Shot)】：\n"
-        "   - 绝对禁止在同一个节拍 (beat) 的 `dialogue` 数组里塞入超过 1 句台词或两个不同角色的对话！\n"
-        "   - 凡是两人交锋（如曹胖子问罪 vs 鲁大川反击），必须拆分为独立的【正反打镜头】：角色A说话一镜（1句台词） → 角色B反击一镜（1句台词），确保每个镜头的口型 (Lip-Sync) 与情绪 100% 精准咬合！\n"
-        "3. 【原著灵魂金句 100% 保留 + 爽点打脸反应镜头】：\n"
-        "   - 原著极具张力的灵魂台词必须原汁原味保留，不得删改或弱化（如「好你个废灵根！敢私拧风门？」「曹管事，杀我不急。那火蓝里透绿，是水路堵了！」「废灵根也配论火？」「行。」「这坯不是烧废的，是堵废的！」「纹是给人看的，水是给炉走的！」「十日后，火不会说谎。」）。\n"
-        "   - 每当主角做出打脸动作（如当众拧回风门令蓝绿妖火缩回樱红、一锤砸裂废坯露出半指厚水垢、按下血手印立生死状），必须紧跟明确的视觉反差与反派/学徒震惊僵住的反应细节！\n"
-        "4. 【结尾强悬念钩子 (Cliffhanger Hook)】：本集最后1~2镜必须定格在反转证物或危机钩子上（如鲁大川借金红炉火摊开掌心发亮的灵砂新垢，眼神骤冷点出：「三年老垢是慢病，里头这层新垢……是谁把黑手伸进了我的水路！」）。\n"
-        "5. 【高振幅连续物理动作驱动 (High-Amplitude Motion)】：每个节拍的 `actionEn` 必须使用强烈、具体、位移幅度饱满的连续物理动作动词（如 `violently wrenches the heavy spanner downward and jerks his head toward the smoking vent`, `slams his palm onto the red button as roaring orange flames erupt outward`, `firmly rotates the ancient bronze damper lever as wild blue-green fire shrinks into steady cherry-red glow`），严禁只写静态表情或心理活动！\n"
-        "6. 【时空与服化道严格隔离】：若存在前世/今生，必须拆分为不同场次。前世场次的 allowedCharacters 只能写 `角色名（前世）`，今生场次只能写 `角色名（今生）`。古风/修仙场次必须强调古代青铜/石质/木质器物与古装布履，严禁出现现代阀门手轮或现代皮靴。\n"
-        "7. 【资产提取严控精简 & 局部特写环境纯净】：\n"
-        "   - `character`（3~6个）、`scene`（2~4个）、`prop`（最多2~4件核心信物，严禁把扳手、螺栓、按钮、瓦盆、烧火棍、炭条等普通工具提取为独立资产）。\n"
-        "   - 所有 `visualPrompt` 必须为纯英文视觉描述（严禁夹杂中文或角色姓名）。场景 `visualPrompt` 只写整体建筑空间与光影，不要把局部小按钮（如 `red start button`）写进大场景通用描述，以免在无关特写镜头里穿帮。\n"
-        "8. 【单人镜头隔离 & 英文描述去名字化】：如果某个节拍是单人特写或单人正反打，`charactersInShot` 数组必须只填这 1 个角色！在 `startPoseEn`、`actionEn`、`endPoseEn` 中用明确外貌衣着指代人物（如 `the 50-year-old weathered repairman in blue work jacket`、`the 19-year-old lean adult young man in gray cloth robe`、`the fat steward in dark brown brocade robe`），严禁要求画面出现任何文字或汉字标牌。\n"
-        "9. 【黄金短剧节奏（全集精选 12~15 个高燃镜头）】：严禁流水账注水！将全章浓缩为 5~6 个场次、全集共 12~15 个刀刀见血的高张力镜头（平均每场 2~3 个镜头），删去琐碎过渡，确保镜头节奏极快、冲突密集！\n"
+        "你是一位顶级商业爆款短剧总编剧与 AI 视听分镜总导演。请将输入的小说或原剧本改编为【高连贯商业短剧分场剧本 + 场次空间调度账本 (Scene Blocking & State Ledger)】并提取高颜值核心资产。\n"
+        "【核心改编总纲】：必须保留原剧本的核心故事走向、人物关系、核心设定与灵魂金句，但绝不能机械照搬小说的零散流水账！你必须根据商业短剧的视听特性与 AI 视频连续性规律，对原剧本进行大刀阔斧的【短剧化调整与重构】：\n"
+        "1. 【场景高度收敛·戏剧三一律（保障全集画面高度连贯）】：\n"
+        "   - 小说往往频繁切换地点和时间（如：前世车间 → 后堂泥地醒来 → 主炉口吵架 → 料棚墙角捡废坯 → 半夜钻炉底刮水垢 → 次日清晨验收），直接照拍会导致视频背景支离破碎、毫无连贯性！\n"
+        "   - 改编时必须将零散碎场【合并浓缩为全集仅 1 个核心高张力主场景】（最多不超过 2 个），将“过夜修炉、去仓库找工具、前世闪回”全部整合重构为【同一主场景内一气呵成的当堂生死对决】！\n"
+        "2. 【保留核心走向，重组短剧爽点递进链】：\n"
+        "   - 严格保留原著主线脉络（如：灵炉回火暴走危机 → 反派管事问罪逼迫 → 主角凭宗师经验一眼点破『火蓝透绿是水路堵了』 → 反派嘲讽 → 主角当场砸裂废锄亮出半指厚水垢铁证 → 当众扳动风门将蓝绿妖火压回樱红灵焰震慑全场 → 按下印信立十日赌约 → 结尾捻出断口最里层的『人为新垢』锁定幕后黑手悬念）。\n"
+        "   - 将原本枯燥隐晦的技术说明或心理活动，全部改写为直观强烈、富有视觉奇观的当场戏剧动作！\n"
+        "3. 【角色与场景 3D 国漫高颜值美型化（告别灰暗土气与现代工具穿帮）】：\n"
+        "   - 严禁将主角或配角写成『灰头土脸、满脸煤灰、瘦弱佝偻、油腻歪嘴』！\n"
+        "   - 提取 `character` 资产时，必须升级为《眷思量》《诛仙》级高颜值 3D 国漫形象：主角须俊朗挺拔、剑眉星目、瓷白细腻肌肤（`19-year-old handsome East Asian young master craftsman, 180cm tall, flawless smooth fair porcelain skin, sharp sword eyebrows and bright starry eyes, neat high ponytail, wearing clean tailored dark-cyan ancient craftsman tunic with leather bracers, hands empty at sides`）；反派须威严华贵、气场冷傲（`imposing plump middle-aged sect steward in luxurious dark-purple and gold embroidered brocade robe, fair skin, haughty dignified expression, hands empty at sides`）。\n"
+        "   - 提取 `scene` 资产时，必须描写恢弘整洁的仙门建筑空间（如 `Grand ancient Chinese xianxia sect forging pavilion interior, towering dragon-carved bronze spirit furnace set in the mid-ground, clean swept dark stone slab floor, carved timber pillars, warm architectural lighting`），严禁写 `scattered with broken...`、`debris`、`rubble`、`tool walls`、`wooden tool racks`（防止生图模型在地上画满垃圾碎渣或在墙上挂满现代五金工具）！\n"
+        "   - 古风/修仙场景下严禁出现 `wrench`、`spanner`、`valve`、`bolt` 等现代机械词汇！风门机关统一写为古代青铜龙头推拉闸杆（`ancient bronze dragon-head sliding lever mounted on the furnace side`）。\n"
+        "   - 严禁让人物手部悬空冒火或手搓火球！灵火必须且只能从青铜灵炉的炉膛口内部（`solely inside the bronze furnace chamber mouth`）喷涌或燃烧。\n"
+        "4. 【严格锁定 180° 空间对视轴线（杜绝证件照式正脸发呆）】：\n"
+        "   - 同一场戏内必须锁死左右站位轴线：主角始终位于画面左侧 3/4 侧身朝向画面右侧（`positioned on screen-left angled 3/4 facing screen-right`），对手/反派始终位于画面右侧 3/4 侧身朝向画面左侧（`positioned on screen-right angled 3/4 facing screen-left`）。\n"
+        "   - 在每个节拍的 `startPoseEn` 和 `endPoseEn` 中必须显式写出该站位与视线朝向！\n"
+        "5. 【同角色跨镜头动作首尾咬合锁（保障视频无缝接力）】：\n"
+        "   - 同一角色在场内第 2、3、4 次出场时，其 `startPoseCn` 与 `startPoseEn` 必须严格承接该角色上一次出场镜头的 `endPoseCn` 与 `endPoseEn`（以 `Continuing directly from his previous ending pose...` 开头），并将 `lockFromPrevEnd` 设为 1，让前后镜头动作如一镜到底般顺滑咬合！\n"
+        "6. 【全集单人主导正反打 · 短剧黄金节奏（精选 7~8 个高燃镜头）】：\n"
+        "   - 为保障 3D 国漫人物五官颜值精度、口型 100% 准确以及跨镜头真实视频尾帧无缝接力，所有节拍必须严格采用【单人主导构图 (SOLO SHOT)】！每个节拍的 `charactersInShot` 数组严格只填 1 个当前镜头核心角色（如 `[\"鲁大川\"]` 或 `[\"曹胖子\"]`），绝不在同一镜头里混入两个人！\n"
+        "   - 核心高光动作（如：一锤砸裂废锄亮出半指水垢、亲手扳动风门将蓝绿妖火压回樱红灵焰、在状纸上重重按下红手印、捻起断口最里层新垢）必须全部由主角单人一气呵成完成，在 `startPoseEn`、`actionEn`、`endPoseEn` 中只描写当前这 1 个角色的连续动作！\n"
+        "   - 每个节拍的 `dialogue` 数组最多只能有 1 句台词（控制在 10~22 字以内，保留原著如『那火蓝里透绿，是水路堵了！』『废灵根也配论火？』『这坯不是烧废的，是堵废的！』『要复火，先压回樱红。』『十日后，火不会说谎。』『三年老垢是慢病，里头这层新垢……是谁把黑手伸进了水路！』等灵魂金句）。\n"
+        "   - 全集严格精选 7~8 个刀刀见血的高浓度镜头，彻底砍掉注水过渡戏！\n"
+        "7. 【高振幅连续物理动作 & 纯英文视觉描述】：\n"
+        "   - 每个节拍的 `actionEn` 必须包含饱满具体的物理动作动词与光影变化；所有 `*En` 与 `visualPrompt` 字段必须为 100% 纯英文（严禁夹杂中文或拼音名字，统一用外貌衣着指代人物，如 `the handsome young craftsman in dark-cyan tunic`、`the plump steward in purple-gold brocade robe`）。\n"
         "只输出合法 JSON 对象，格式如下：\n"
         "{\n"
         '  "extractedAssets": [{"assetType":"character|scene|prop", "name":"准确中文名称", "roleTag":"身份/用途", "eraTag":"前世|今生|通用", "visualPrompt":"Pure English detailed visual prompt (strictly no Chinese characters inside visualPrompt)", "voiceProfile":"声线特征"}],\n'
@@ -283,16 +292,29 @@ def _callLlmForSceneLedger(novelText, existingAssets, visualStyle, llmConfig):
         "}"
     )
 
-    userPrompt = f"【全局视觉画风】：{visualStyle}\n【项目已有资产】：\n{assetText or '无'}\n\n【待改写小说原文】：\n{novelText}"
-    payload = json.dumps({
-        "model": llmConfig.get("model") or "deepseek-chat",
+    userPrompt = (
+        f"【全局视觉画风】：{visualStyle}\n"
+        f"【项目已有资产】：\n{assetText or '无'}\n\n"
+        "【硬性篇幅与结构约束】：\n"
+        "- 请将整集剧情高度浓缩在 1 个核心主场景（`sceneLedger` 仅含 1 个主场景 `S01`）内一气呵成演完；\n"
+        "- 全集严格精选 7~8 个高张力节拍（`beats` 数量严格为 7~8 个），每个英文描述字段简明扼要（20~35 词以内），保留全部主线走向与爽点反转！\n\n"
+        f"【待改写小说原文】：\n{novelText}"
+    )
+    rawModel = str(llmConfig.get("model") or "deepseek-chat").strip()
+    effectiveModel = "deepseek-chat" if rawModel == "deepseek-flash" else rawModel
+    reqBody = {
+        "model": effectiveModel,
         "messages": [
             {"role": "system", "content": systemPrompt},
             {"role": "user", "content": userPrompt},
         ],
         "temperature": 0.25,
+        "max_tokens": 8192,
         "response_format": {"type": "json_object"},
-    }).encode("utf-8")
+    }
+    if "flash" in rawModel or "reasoner" in rawModel:
+        reqBody["thinking"] = {"type": "disabled"}
+    payload = json.dumps(reqBody).encode("utf-8")
 
     req = urllib.request.Request(
         url,
@@ -303,7 +325,7 @@ def _callLlmForSceneLedger(novelText, existingAssets, visualStyle, llmConfig):
         },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=150) as resp:
+    with urllib.request.urlopen(req, timeout=180) as resp:
         body = json.loads(resp.read().decode("utf-8"))
         content = body["choices"][0]["message"]["content"]
         return json.loads(content)
@@ -535,12 +557,24 @@ def extractPureEnglishVisual(rawText, eraTag=""):
         flags=re.IGNORECASE,
     )
 
-    # 3. 古风/修仙时代防现代工业穿帮校准
-    isAncient = any(k in str(eraTag) for k in ("今生", "修仙", "古风", "仙侠", "正篇"))
+    # 3. 古风/修仙时代防现代工业五金工具与满地碎垃圾穿帮校准
+    isAncient = any(k in str(eraTag) for k in ("今生", "修仙", "古风", "仙侠", "正篇")) or not eraTag
     if isAncient:
-        text = re.sub(r"\bair\s+gate\s+wheel\b", "ancient bronze furnace sliding damper lever", text, flags=re.IGNORECASE)
-        text = re.sub(r"\bvalve\s+wheel\b", "ancient bronze damper lever", text, flags=re.IGNORECASE)
+        text = re.sub(r"\b(?:heavy\s+iron\s+)?wind-gate\s+wrench\b", "ancient bronze dragon-head sliding lever", text, flags=re.IGNORECASE)
+        text = re.sub(r"\b(?:iron\s+|heavy\s+)?(?:wrench|spanner)\b", "ancient bronze dragon-head lever", text, flags=re.IGNORECASE)
+        text = re.sub(r"\bair[- ]?(?:gate|valve)\s+(?:wheel|lever)\b", "ancient bronze dragon-head sliding lever", text, flags=re.IGNORECASE)
+        text = re.sub(r"\bvalve(?:\s+wheel)?\b", "ancient bronze damper lever", text, flags=re.IGNORECASE)
         text = re.sub(r"\bglowing\s+runes\b", "subtle engraved ancient patterns without text", text, flags=re.IGNORECASE)
+        text = re.sub(r"\bscattered\s+(?:with\s+)?broken\s+[^,.]+", "clean swept dark stone floor", text, flags=re.IGNORECASE)
+        text = re.sub(r",?\s*\bwooden\s+(?:tool\s+)?racks(?:\s+and\s+tool\s+walls)?\b", "", text, flags=re.IGNORECASE)
+        text = re.sub(r",?\s*\btool\s+walls\b", "", text, flags=re.IGNORECASE)
+
+    # 4. 修正中式直译词与导致人脸显老/粗糙/歪嘴的负面词
+    text = re.sub(r"\bface\s+darken(?:ing|s|ed)?\b", "expression turning grim and solemn", text, flags=re.IGNORECASE)
+    text = re.sub(r"\blive-action\s+realism\b", "exquisite 3D Guoman animation beauty aesthetic", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bsharp\s+masculine\s+jawline\b", "refined handsome V-shaped facial contour", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bcruel\s+sneer(?:ing)?(?:\s+expression)?\b", "cold haughty noble expression", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bsharp\s+sinister\s+eyes\b", "sharp phoenix eyes", text, flags=re.IGNORECASE)
 
     return text.strip()
 
@@ -596,10 +630,20 @@ def breakScriptIntoKeyframedShots(scriptText, projectAssets, visualStyle, llmCon
             else:
                 expandedBeats.append(rawBeat)
 
+        seenSceneCharKeys = set()
         for beat in expandedBeats:
-            # 严格只取本节拍实际入镜的角色（单人镜头绝不强塞第2人）
+            # 严格采用单人主导正反打（SOLO FOCUS）：若有台词则锁定说话人为唯一入镜角色，否则取首位主导角色
             rawCharsInBeat = [str(c).lstrip("@").strip() for c in (beat.get("charactersInShot") or []) if str(c).strip()]
-            charsInShot = rawCharsInBeat if rawCharsInBeat else (allowedChars[:1] if allowedChars else [])
+            beatDlgs = [d for d in (beat.get("dialogue") or []) if isinstance(d, dict) and str(d.get("speaker") or "").strip()]
+            if beatDlgs:
+                spkClean = str(beatDlgs[0].get("speaker") or "").lstrip("@").strip()
+                charsInShot = [spkClean] if spkClean else (rawCharsInBeat[:1] or allowedChars[:1])
+            else:
+                charsInShot = rawCharsInBeat[:1] if rawCharsInBeat else (allowedChars[:1] if allowedChars else [])
+            charKey = tuple(charsInShot)
+            isRepeatCharInScene = bool(charKey and charKey in seenSceneCharKeys)
+            if charKey:
+                seenSceneCharKeys.add(charKey)
             propsInShot = [str(p).lstrip("@").strip() for p in (beat.get("propsInShot") or []) if str(p).strip()]
 
             refs = []
@@ -666,13 +710,14 @@ def breakScriptIntoKeyframedShots(scriptText, projectAssets, visualStyle, llmCon
                 f"{endPoseEn}. {noTextSuffix}"
             )
 
+            autoLock = 1 if (isRepeatCharInScene or int(beat.get("lockFromPrevEnd") or 0) == 1 or beat.get("continuityMode") == "continue_action") else 0
             compiledShots.append({
                 "shotNumber": shotNum,
                 "title": f"[{sceneCode}] {beat.get('title') or f'镜头 #{shotNum}'}",
                 "shotCategory": beat.get("beatCategory") or "action_fl2va",
                 "durationSec": float(beat.get("durationSec") or 5.0),
-                "continuityMode": beat.get("continuityMode") or ("establish" if shotNum == 1 else "same_scene_cut"),
-                "lockFromPrevEnd": 0,
+                "continuityMode": "continue_action" if autoLock else (beat.get("continuityMode") or ("establish" if shotNum == 1 else "same_scene_cut")),
+                "lockFromPrevEnd": autoLock,
                 "axisRule": f"[{sceneCode} 轴线] {scene.get('spatialAxisCn') or axisEn}",
                 "intentText": f"【{sceneCode}·{eraTag}】{beat.get('intentCn') or ''}",
                 "cameraFraming": framing,
@@ -713,16 +758,19 @@ def compileAssetSheetPrompt(assetRow, visualStyle="High-end Chinese 3D CG & live
 
     if aType == "character":
         return (
-            f"Character design reference portrait, {cleanStyle}. "
-            f"Solo portrait of 1 person: {cleanDesc}. "
-            "Medium close-up portrait showing clear facial features, adult bone structure, consistent hairstyle, "
-            f"exact clothing texture and color palette, cinematic rim lighting, ultra-detailed skin and fabric. {noTextRule}"
+            f"Masterpiece 3D Chinese xianxia CG character reference portrait (top-tier Guoman beauty aesthetic like The Island of Siliang and Jade Dynasty), {cleanStyle}. "
+            f"Solo waist-up portrait of 1 stunningly attractive person: {cleanDesc}. "
+            "Hands empty at sides (strictly NO weapons or props blocking the chest or face), natural calm neutral expression, "
+            "refined delicate East Asian facial proportions, flawless smooth fair porcelain skin with soft subsurface scattering, "
+            "luminous expressive eyes, silky hair strands, clean neutral dark blurred background, flattering soft butterfly lighting. "
+            f"Strictly NO rough skin pores, NO oily skin, NO deep wrinkles, NO distorted grimace. {noTextRule}"
         )
     if aType == "scene":
         return (
-            f"Cinematic environment concept art, empty establishing wide shot with NO people, {cleanStyle}. "
+            f"Masterpiece 3D Chinese xianxia CG architectural environment concept art, empty establishing wide shot with NO people, {cleanStyle}. "
             f"Environment details: {cleanDesc}. "
-            f"Clear spatial depth, consistent light source direction, atmospheric volumetric lighting, 8k resolution. {noTextRule}"
+            "Grand palace-grade spatial depth, clean swept dark stone slab floor, majestic carved bronze and timber architecture, consistent light source direction, atmospheric volumetric lighting, 8k resolution. "
+            f"Strictly NO scattered floor trash or debris, NO modern open-end wrenches, NO modern industrial tools. {noTextRule}"
         )
     return (
         f"Hero prop studio close-up reference, {cleanStyle}. "
@@ -792,12 +840,13 @@ def compileLockedKeyframePrompt(shotRow, assets, visualStyle, frameRole="first")
 
     # 将动作句中的拼音角色名替换为带明确服装外貌特征的英文指代，防止多人同框时穿错衣服或变成双胞胎
     nameAliasMap = {
-        r"\bLu Dachuan in the past life\b": "the 50-year-old weathered repairman in oil-stained blue work jacket",
-        r"\bLu Dachuan in this life\b": "the 19-year-old lean adult young man in ragged gray cloth robe",
-        r"\bLu Dachuan\b": "the 19-year-old lean adult young man in ragged gray cloth robe" if "今生" in eraTag else "the 50-year-old weathered repairman in blue work jacket",
-        r"\bCao Pangzi\b": "the fat middle-aged steward in dark brown brocade robe",
-        r"\bCao\b": "the fat steward in dark brown brocade robe",
-        r"\bXiao Shitou\b": "the 16-year-old teenage apprentice in patched short gray jacket",
+        r"\bLu Dachuan in the past life\b": "the handsome young master craftsman in tailored dark-cyan ancient tunic",
+        r"\bLu Dachuan in this life\b": "the 19-year-old handsome East Asian young master craftsman in tailored dark-cyan ancient tunic",
+        r"\bLu Dachuan\b": "the 19-year-old handsome East Asian young master craftsman in tailored dark-cyan ancient tunic",
+        r"\bCao Pangzi\b": "the imposing plump sect steward in luxurious dark-purple and gold brocade robe",
+        r"\bSteward Cao\b": "the imposing plump sect steward in luxurious dark-purple and gold brocade robe",
+        r"\bCao\b": "the imposing plump sect steward in luxurious dark-purple and gold brocade robe",
+        r"\bXiao Shitou\b": "the 16-year-old clean-cut teenage apprentice in slate-blue short tunic",
     }
     for pat, repl in nameAliasMap.items():
         poseCleanEn = re.sub(pat, repl, poseCleanEn, flags=re.IGNORECASE)
@@ -830,12 +879,14 @@ def compileLockedKeyframePrompt(shotRow, assets, visualStyle, frameRole="first")
 
     if frameRole == "last":
         dnaBlocks.append(
-            f"Ending Action Pose (keep the exact same camera angle, character identity, clothing, and background layout as the opening frame): {poseCleanEn}."
+            f"Ending Action Climax Pose (distinct completed action pose at end of shot, same character identity and environment): {poseCleanEn}."
         )
     else:
         dnaBlocks.append(f"Action & Composition: {poseCleanEn}.")
 
     dnaBlocks.append(
-        "Pure photographic frame, natural adult proportions, strictly NO text, NO Chinese characters, NO signboards, NO nameplates, NO helmet labels, NO watermarks."
+        "Masterpiece 3D Guoman beauty aesthetic, flawless smooth fair skin, refined attractive East Asian facial features, clean swept ancient stone floor, "
+        "strictly NO modern open-end wrench or spanner, NO scattered floor trash, NO glowing hands or magic flames on hands (fire only inside the bronze furnace mouth), "
+        "strictly NO text, NO Chinese characters, NO signboards, NO nameplates, NO helmet labels, NO watermarks."
     )
     return " ".join(dnaBlocks)

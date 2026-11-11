@@ -49,12 +49,27 @@ def resolveMediaUrlToPath(mediaUrl):
     return None
 
 
+def _extractShotCharacterKey(shotRow):
+    """提取镜头绑定的出场角色名称元组（用于跨正反打匹配同一角色的上一个镜头）"""
+    try:
+        refs = json.loads(shotRow["referenceAssetsJson"] or "[]")
+    except Exception:
+        refs = []
+    chars = [
+        str(r.get("asset", "")).lstrip("@").strip()
+        for r in refs
+        if isinstance(r, dict) and r.get("role") == "character" and str(r.get("asset", "")).strip()
+    ]
+    return tuple(chars)
+
+
 def syncEpisodeFrameLocks(episodeId, overwriteExisting=False):
     """
     扫描指定剧集的所有镜头：
-    凡是开启了 lockFromPrevEnd=1 的镜头，
-    若前一镜头已有高清尾帧 (lastFrameUrl) 或首帧 (firstFrameUrl)，
-    且当前镜头尚未生成首帧（或用户显式点击了 overwriteExisting=True 强制同步），则无损同步为当前镜头的首帧。
+    凡是开启了 lockFromPrevEnd=1 的镜头：
+    1. 优先向前倒序查找最近一个“同出场角色”的镜头作为帧源 (donorShot)，支持正反打切回同一角色时无缝承接其上一镜尾帧；
+    2. 若无同角色前序镜头，则承接紧邻上一镜；
+    3. 一旦帧源镜头已有真实尾帧 (lastFrameUrl) 或首帧 (firstFrameUrl)，自动无损同步为当前镜头的首帧 (firstFrameUrl)。
     返回本次成功同步的镜头数量。
     """
     syncedCount = 0
@@ -65,12 +80,23 @@ def syncEpisodeFrameLocks(episodeId, overwriteExisting=False):
             (episodeId,),
         ).fetchall()
 
-        prevShot = None
+        historyShots = []
         for shot in shots:
-            if prevShot is not None and int(shot["lockFromPrevEnd"] or 0) == 1:
-                donorUrl = prevShot["lastFrameUrl"] or prevShot["firstFrameUrl"]
+            if historyShots and int(shot["lockFromPrevEnd"] or 0) == 1:
+                curCharKey = _extractShotCharacterKey(shot)
+                donorShot = None
+                if curCharKey:
+                    for earlier in reversed(historyShots):
+                        if _extractShotCharacterKey(earlier) == curCharKey and (earlier["lastFrameUrl"] or earlier["firstFrameUrl"]):
+                            donorShot = earlier
+                            break
+                if donorShot is None:
+                    donorShot = historyShots[-1]
+
+                donorUrl = donorShot["lastFrameUrl"] or donorShot["firstFrameUrl"]
                 currentFirst = shot["firstFrameUrl"] or ""
-                if donorUrl and (overwriteExisting or not currentFirst) and currentFirst != donorUrl:
+                shouldSync = bool(donorUrl) and (overwriteExisting or not currentFirst or bool(donorShot["lastFrameUrl"]))
+                if shouldSync and currentFirst != donorUrl:
                     newStatus = shot["status"]
                     if newStatus == "planned":
                         newStatus = "keyframes_ready"
@@ -79,7 +105,8 @@ def syncEpisodeFrameLocks(episodeId, overwriteExisting=False):
                         (donorUrl, newStatus, now, shot["id"]),
                     )
                     syncedCount += 1
-            prevShot = conn.execute("SELECT * FROM shots WHERE id=?", (shot["id"],)).fetchone()
+            refreshed = conn.execute("SELECT * FROM shots WHERE id=?", (shot["id"],)).fetchone()
+            historyShots.append(refreshed)
         conn.commit()
     return syncedCount
 
@@ -119,7 +146,7 @@ def extractHighResLastFrameFromVideo(shotId):
             (lastFrameUrl, time.time(), shotId),
         )
         conn.commit()
-        syncEpisodeFrameLocks(shot["episodeId"])
+        syncEpisodeFrameLocks(shot["episodeId"], overwriteExisting=True)
         return lastFrameUrl
 
 
