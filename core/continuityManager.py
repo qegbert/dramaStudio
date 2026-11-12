@@ -115,11 +115,18 @@ def extractHighResLastFrameFromVideo(shotId):
     """
     当某个单首帧镜头 (dialogue_i2v) 没有单独生成静态尾帧，但已生成视频且下一镜需要衔接时，
     支持以最高无损 PNG 格式提取该视频末尾帧作为尾帧资产。
+    【重要防护】：若本镜原本就由图像模型生成了高清静态尾帧，坚决保留该高质量原图，杜绝用带运动模糊的视频截帧破坏画质与面部一致性！
     """
     with closing(getDbConnection()) as conn:
         shot = conn.execute("SELECT * FROM shots WHERE id=?", (shotId,)).fetchone()
         if not shot or not shot["videoUrl"]:
             raise ValueError("该镜头尚无已生成的视频，无法提取末尾帧")
+
+        existingLast = shot["lastFrameUrl"] or ""
+        # 若已有由图像模型生成的高清静态尾帧（非提取截帧），保留该高质量资产以保护连续性
+        if existingLast and not existingLast.startswith("/media/keyframes/extracted_last_"):
+            syncEpisodeFrameLocks(shot["episodeId"], overwriteExisting=False)
+            return existingLast
 
         videoPath = resolveMediaUrlToPath(shot["videoUrl"])
         if not videoPath or not videoPath.exists():
@@ -131,9 +138,10 @@ def extractHighResLastFrameFromVideo(shotId):
 
         cmd = [
             ffmpegBin, "-v", "error", "-y",
-            "-sseof", "-0.12",
+            "-sseof", "-0.08",
             "-i", str(videoPath),
             "-frames:v", "1",
+            "-q:v", "1",
             str(outPath),
         ]
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
@@ -146,7 +154,7 @@ def extractHighResLastFrameFromVideo(shotId):
             (lastFrameUrl, time.time(), shotId),
         )
         conn.commit()
-        syncEpisodeFrameLocks(shot["episodeId"], overwriteExisting=True)
+        syncEpisodeFrameLocks(shot["episodeId"], overwriteExisting=False)
         return lastFrameUrl
 
 

@@ -276,7 +276,6 @@ def buildH3Fl2vaWorkflow(
         "4": {"class_type": "VAELoader", "inputs": {"vae_name": "minimax_h3_audio_vae_fp32.safetensors"}},
         "5": {"class_type": "MiniMaxH3MemoryEfficientSageAttentionPatch", "inputs": {"model": ["1", 0]}},
         "6": {"class_type": "MiniMaxH3SigmaShift", "inputs": {"model": ["5", 0], "shift_video": 12.0, "shift_audio": 3.0}},
-        "60": {"class_type": "NBH3HyperStep", "inputs": {"model": ["6", 0], "mode": "Fast - Skip 34 Blocks", "write_report": False}},
         "7": {"class_type": "LoadImage", "inputs": {"image": firstFrameUploadedName}},
     }
 
@@ -295,8 +294,8 @@ def buildH3Fl2vaWorkflow(
         i2vInputs["last_frame"] = ["8", 0]
 
     wf["9"] = {"class_type": "MiniMaxH3ImageToVideo", "inputs": i2vInputs}
-    wf["10"] = {"class_type": "BasicGuider", "inputs": {"model": ["60", 0], "conditioning": ["9", 0]}}
-    wf["11"] = {"class_type": "BasicScheduler", "inputs": {"model": ["60", 0], "scheduler": "simple", "steps": int(steps), "denoise": 1.0}}
+    wf["10"] = {"class_type": "BasicGuider", "inputs": {"model": ["6", 0], "conditioning": ["9", 0]}}
+    wf["11"] = {"class_type": "BasicScheduler", "inputs": {"model": ["6", 0], "scheduler": "simple", "steps": int(steps), "denoise": 1.0}}
     wf["12"] = {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "res_multistep"}}
     wf["13"] = {"class_type": "RandomNoise", "inputs": {"noise_seed": seed}}
     wf["14"] = {
@@ -887,9 +886,8 @@ def enqueueShotVideoTask(shotId, engineOverride=None):
                 frameLength = calculateH3FrameGrid(shotRow.get("durationSec", 5.0))
 
                 upFirst = uploadImageToComfy(firstPath, comfyStatus["endpoint"])
-                # 默认以首帧单锚点 + 高动态动作提示词驱动 MiniMax-H3，避免静态生图的尾帧把人物动作锁死在原地；
-                # 视频渲染完成后会自动抽取视频真实尾帧写入 lastFrameUrl
-                useDualAnchor = str(getSettingValue("strictDualFrameAnchor", "0")) == "1"
+                # 默认对 action_fl2va 镜头强制启用首尾双锚点驱动，彻底解决单首帧自由游走、肢体融化变形与动作无法闭环的问题
+                useDualAnchor = str(getSettingValue("strictDualFrameAnchor", "1")) != "0"
                 upLast = (
                     uploadImageToComfy(lastPath, comfyStatus["endpoint"])
                     if (useDualAnchor and lastPath and lastPath.exists() and shotRow.get("shotCategory") == "action_fl2va")

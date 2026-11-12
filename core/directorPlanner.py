@@ -76,9 +76,17 @@ def compileFl2vaVideoPrompt(shotDict, hasLastFrame=True):
             f"Over {duration:g} seconds, perform expressive physical movement, intense gaze shifts, natural breathing, and accurate lip-sync from the opening frame."
         )
 
+    isLockedFromPrev = int(shotDict.get("lockFromPrevEnd") or 0) == 1
+    if isLockedFromPrev:
+        firstPoseLine = (
+            f"[0.0s Start Action] Seamlessly continuing from the exact physical posture and position established in the opening keyframe without any sudden pop or morphing. Opening context: {firstPose}"
+        )
+    else:
+        firstPoseLine = f"[0.0s Start Action] {firstPose}"
+
     timelineLines = [
         f"[Camera & Blocking] {framing}, {movement}, cinematic dramatic lighting, pronounced physical motion.",
-        f"[0.0s Start Action] {firstPose}",
+        firstPoseLine,
         f"[0.0s -> {duration:g}s Continuous Physical Action] {actionArc}",
     ]
     if lastPose:
