@@ -15,6 +15,10 @@ let currentState = {
   settings: {},
   pollTimer: null,
   saveIndicatorTimer: null,
+  recommendedStep: 1,
+  autoPilotRunning: false,
+  autoPilotAbort: false,
+  autoPilotPhaseText: "",
 };
 
 function escapeHtml(text) {
@@ -206,11 +210,17 @@ async function loadProjects(preferredId = null) {
 
 async function onProjectChange(projectId) {
   if (!projectId) return;
+  if (currentState.autoPilotRunning) {
+    stopAutoPilot("已切换短剧项目，自动推进已停止");
+  }
   await loadWorkspace(Number(projectId));
 }
 
 async function onEpisodeChange(episodeId) {
   if (!episodeId || !currentState.activeProjectId) return;
+  if (currentState.autoPilotRunning) {
+    stopAutoPilot("已切换剧集，自动推进已停止");
+  }
   await loadWorkspace(currentState.activeProjectId, Number(episodeId));
 }
 
@@ -282,25 +292,95 @@ function updateWorkflowStepper(shots, activeEpisode, assets = []) {
       : `${vidReadyCount} / ${totalShots} 已出视频`;
   }
 
+  const hasScriptText = Boolean(activeEpisode && activeEpisode.scriptContent && activeEpisode.scriptContent.trim());
+  const stepDoneMap = {
+    1: hasSceneLedger || hasScriptText,
+    2: totalAssets > 0 && imagedAssets === totalAssets,
+    3: totalShots > 0,
+    4: totalShots > 0 && kfReadyCount === totalShots,
+    5: hasMaster,
+  };
+
   let recommendedStep = 1;
-  if (!hasSceneLedger && totalAssets === 0 && totalShots === 0) {
+  let nextActionLabel = "▶ 第①步：输入/改写剧本";
+  let guideText = "第 ① 步：请先粘贴小说原文或故事大纲，由 AI 改写并提取角色与场景";
+
+  if (!stepDoneMap[1] && totalAssets === 0 && totalShots === 0) {
     recommendedStep = 1;
-  } else if (totalAssets > 0 && totalShots === 0) {
+  } else if (totalAssets > 0 && imagedAssets < totalAssets && totalShots === 0) {
     recommendedStep = 2;
+    nextActionLabel = `▶ 第②步：生成缺失定妆图 (缺 ${totalAssets - imagedAssets} 项)`;
+    guideText = `第 ② 步：还有 ${totalAssets - imagedAssets} 项角色/场景/道具未生成定妆图，建议先生成锁定外貌`;
+  } else if (totalAssets > 0 && totalShots === 0) {
+    recommendedStep = 3;
+    nextActionLabel = "▶ 第③步：一键拆解分镜表";
+    guideText = "第 ③ 步：角色与场景设定已就绪，点击即可一键拆解全集分镜";
   } else if (totalShots === 0) {
     recommendedStep = 3;
+    nextActionLabel = "▶ 第③步：一键拆解分镜表";
+    guideText = "第 ③ 步：剧本已就绪，点击即可一键拆解生成分镜故事板";
   } else if (kfReadyCount < totalShots) {
     recommendedStep = 4;
+    nextActionLabel = `▶ 第④步：生成缺失画面 (剩 ${totalShots - kfReadyCount} 镜)`;
+    guideText = `第 ④ 步：共 ${totalShots} 镜，还有 ${totalShots - kfReadyCount} 镜首尾画面待生成`;
+  } else if (vidReadyCount < totalShots) {
+    recommendedStep = 5;
+    nextActionLabel = `▶ 第⑤步：排队出视频 (剩 ${totalShots - vidReadyCount} 镜)`;
+    guideText = `第 ⑤ 步：画面已全部就绪！还剩 ${totalShots - vidReadyCount} 个镜头待渲染视频`;
+  } else if (!hasMaster) {
+    recommendedStep = 5;
+    nextActionLabel = "▶ 第⑤步：一键合成整集 MP4";
+    guideText = "第 ⑤ 步：全集分镜视频已出片！点击即可无缝拼接为完整短剧 MP4";
   } else {
     recommendedStep = 5;
+    nextActionLabel = "🎉 本集已合成完毕";
+    guideText = "✅ 本集短剧已全部制作完成！可在下方母带播放器预览或下载 MP4";
   }
+
+  currentState.recommendedStep = recommendedStep;
 
   [1, 2, 3, 4, 5].forEach((num) => {
     const card = document.getElementById(`stepCard${num}`);
     if (card) {
-      card.classList.toggle("recommended", num === recommendedStep);
+      const isRec = num === recommendedStep && !hasMaster;
+      card.classList.toggle("recommended", isRec);
+      card.classList.toggle("completed", Boolean(stepDoneMap[num]) && !isRec);
     }
   });
+
+  renderAutoPilotBarState(guideText, nextActionLabel, hasMaster);
+}
+
+/**
+ * 同步更新顶部「一键连续出片控制台」UI 状态
+ */
+function renderAutoPilotBarState(guideText, nextActionLabel, hasMaster = false) {
+  const bar = document.getElementById("autoPilotBar");
+  const badge = document.getElementById("autoPilotBadge");
+  const textEl = document.getElementById("autoPilotStatusText");
+  const nextBtn = document.getElementById("btnRunNextStep");
+  const autoBtn = document.getElementById("btnAutoPilot");
+  if (!bar || !badge || !textEl || !nextBtn || !autoBtn) return;
+
+  const isRunning = Boolean(currentState.autoPilotRunning);
+  bar.classList.toggle("running", isRunning);
+
+  if (isRunning) {
+    badge.textContent = "⚡ 自动流水线运行中";
+    textEl.textContent = currentState.autoPilotPhaseText || "正在连续推进后续步骤...";
+    nextBtn.disabled = true;
+    autoBtn.textContent = "⏹ 停止自动推进";
+    autoBtn.classList.remove("btnPrimary");
+    autoBtn.classList.add("btnDanger");
+  } else {
+    badge.textContent = hasMaster ? "✅ 制作完成" : "⚡ 智能导航";
+    textEl.textContent = guideText;
+    nextBtn.disabled = false;
+    nextBtn.textContent = nextActionLabel;
+    autoBtn.textContent = hasMaster ? "🔁 重新检查并补全" : "🚀 一键连续出片";
+    autoBtn.classList.remove("btnDanger");
+    autoBtn.classList.add("btnPrimary");
+  }
 }
 
 function renderSceneLedger(activeEpisode) {
@@ -1938,6 +2018,302 @@ async function saveSettings() {
     await refreshStatus();
   } catch (err) {
     showToast(`保存设置失败: ${err.message}`, "error");
+  }
+}
+
+/* ============================================================================
+ * 智能导航与一键连续出片流水线 (Auto-Pilot)
+ * ============================================================================ */
+
+function setAutoPilotPhase(phaseText) {
+  currentState.autoPilotPhaseText = phaseText;
+  const textEl = document.getElementById("autoPilotStatusText");
+  if (textEl && currentState.autoPilotRunning) {
+    textEl.textContent = phaseText;
+  }
+}
+
+function stopAutoPilot(reasonText = "已手动停止自动流水线") {
+  currentState.autoPilotAbort = true;
+  currentState.autoPilotRunning = false;
+  currentState.autoPilotPhaseText = "";
+  if (reasonText) {
+    showToast(reasonText, "info");
+  }
+  if (currentState.workspace) {
+    const ws = currentState.workspace;
+    updateWorkflowStepper(ws.shots || [], ws.activeEpisode, ws.assets || []);
+  }
+}
+
+async function runRecommendedStep() {
+  if (!currentState.workspace || !currentState.activeEpisodeId) {
+    showToast("请先选择或新建短剧与剧集", "error");
+    return;
+  }
+  const ws = currentState.workspace;
+  const shots = ws.shots || [];
+  const assets = ws.assets || [];
+  const ep = ws.activeEpisode;
+  const step = currentState.recommendedStep || 1;
+
+  if (step === 1) {
+    openScriptModal(true);
+    return;
+  }
+  if (step === 2) {
+    const missingAssets = assets.filter((a) => !a.imageUrl).length;
+    if (missingAssets > 0) {
+      await batchGenerateAllAssetImages(true);
+    } else {
+      openAssetBibleModal();
+    }
+    return;
+  }
+  if (step === 3) {
+    await triggerDirectBreakdownFromMain();
+    return;
+  }
+  if (step === 4) {
+    await batchGenerateKeyframes(100, true);
+    return;
+  }
+  if (step === 5) {
+    const vidReady = shots.filter((s) => Boolean(s.videoUrl)).length;
+    if (vidReady < shots.length) {
+      await batchGenerateAllVideos();
+    } else if (!ep || !ep.masterVideoUrl) {
+      await mergeMasterEpisode();
+    } else {
+      const player = document.getElementById("masterVideoPlayer");
+      if (player) player.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }
+}
+
+async function startAutoPilotFromScript() {
+  const novelDraft = (document.getElementById("novelInputArea").value || "").trim();
+  const scriptDraft = (document.getElementById("scriptInputArea").value || "").trim();
+  if (!novelDraft && !scriptDraft) {
+    showToast("请先粘贴小说原文或分场剧本", "error");
+    openScriptModal(true);
+    return;
+  }
+  if (currentState.autoPilotRunning) {
+    showToast("自动流水线已在运行中", "info");
+    return;
+  }
+  await startAutoPilot({ novelDraft, scriptDraft });
+}
+
+async function toggleAutoPilot() {
+  if (currentState.autoPilotRunning) {
+    stopAutoPilot("已暂停一键连续出片，可随时手动微调后继续");
+    return;
+  }
+  await startAutoPilot({});
+}
+
+async function waitForProjectTasksIdle(projectId, phaseLabel) {
+  let idleCounter = 0;
+  while (!currentState.autoPilotAbort) {
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    if (currentState.autoPilotAbort) return false;
+    try {
+      const data = await apiFetch("/api/tasks");
+      const activeTasks = (data.tasks || []).filter(
+        (t) => t.projectId === projectId && (t.status === "queued" || t.status === "running")
+      );
+      if (activeTasks.length === 0) {
+        idleCounter += 1;
+        if (idleCounter >= 1) {
+          await loadWorkspace(currentState.activeProjectId, currentState.activeEpisodeId);
+          return true;
+        }
+      } else {
+        idleCounter = 0;
+        const runningTask = activeTasks.find((t) => t.status === "running") || activeTasks[0];
+        const titleHint = runningTask && runningTask.label ? `：${runningTask.label}` : "";
+        setAutoPilotPhase(`${phaseLabel}（队列剩余 ${activeTasks.length} 项${titleHint}）`);
+        await loadWorkspace(currentState.activeProjectId, currentState.activeEpisodeId);
+      }
+    } catch (err) {
+      // 网络瞬时抖动时不立即中断，继续下次轮询
+    }
+  }
+  return false;
+}
+
+async function startAutoPilot(draftOverride = {}) {
+  if (!currentState.activeProjectId || !currentState.activeEpisodeId) {
+    showToast("请先选择或新建短剧与剧集", "error");
+    return;
+  }
+
+  currentState.autoPilotRunning = true;
+  currentState.autoPilotAbort = false;
+  setAutoPilotPhase("正在分析当前剧集进度并启动连续出片...");
+  renderAutoPilotBarState("", "", false);
+  showToast("🚀 已启动一键连续出片流水线，将自动推进后续全部步骤！", "success");
+
+  try {
+    let localNovelDraft = (draftOverride.novelDraft || "").trim();
+    let localScriptDraft = (draftOverride.scriptDraft || "").trim();
+
+    for (let guard = 0; guard < 12; guard += 1) {
+      if (currentState.autoPilotAbort) break;
+      await loadWorkspace(currentState.activeProjectId, currentState.activeEpisodeId);
+      const ws = currentState.workspace;
+      if (!ws || !ws.activeEpisode) break;
+
+      const ep = ws.activeEpisode;
+      const assets = ws.assets || [];
+      const shots = ws.shots || [];
+      const hasLedger = Boolean(ep.sceneLedger && ep.sceneLedger.length > 0);
+      const effectiveNovel = localNovelDraft || (ep.novelContent || "").trim();
+      const effectiveScript = localScriptDraft || (ep.scriptContent || "").trim();
+
+      // 阶段 1：若既无分场账本又无剧本，自动执行 AI 改写与设定提取
+      if (!hasLedger && !effectiveScript) {
+        if (!effectiveNovel) {
+          stopAutoPilot("");
+          showToast("当前集数尚未输入小说或剧本，请先粘贴内容", "info");
+          openScriptModal(true);
+          return;
+        }
+        setAutoPilotPhase("⚡ [1/5] 正在调用 AI 改写分场剧本并提取角色场景...");
+        await apiFetch(`/api/episodes/${ep.id}/rewriteScript`, {
+          method: "POST",
+          body: JSON.stringify({ novelContent: effectiveNovel }),
+        });
+        localNovelDraft = "";
+        continue;
+      }
+
+      // 阶段 2：若存在缺失定妆图的角色/场景/道具，自动批量生成并等待完成
+      const missingAssetCount = assets.filter((a) => !a.imageUrl).length;
+      if (missingAssetCount > 0) {
+        setAutoPilotPhase(`🎨 [2/5] 正在自动生成 ${missingAssetCount} 项定妆照（锁死人物外貌衣着）...`);
+        const assetRes = await apiFetch(`/api/projects/${currentState.activeProjectId}/batchAssetImages`, {
+          method: "POST",
+          body: JSON.stringify({ onlyMissing: true }),
+        });
+        if (assetRes.count > 0) {
+          const ok = await waitForProjectTasksIdle(
+            currentState.activeProjectId,
+            "🎨 [2/5] 正在生成角色/场景/道具定妆照"
+          );
+          if (!ok || currentState.autoPilotAbort) return;
+          const afterMissing = ((currentState.workspace && currentState.workspace.assets) || []).filter((a) => !a.imageUrl).length;
+          if (afterMissing >= missingAssetCount) {
+            stopAutoPilot("⚠️ 部分定妆图生成失败，已暂停自动推进，请检查右侧任务队列或引擎连接");
+            return;
+          }
+          continue;
+        }
+      }
+
+      // 阶段 3：若尚未拆解分镜，自动拆解分镜故事板
+      if (shots.length === 0) {
+        setAutoPilotPhase("🎬 [3/5] 正在基于锁定设定自动拆解全集分镜故事板...");
+        await apiFetch(`/api/episodes/${ep.id}/breakdown`, {
+          method: "POST",
+          body: JSON.stringify({
+            novelContent: effectiveNovel,
+            scriptContent: effectiveScript,
+            reuseLedger: hasLedger,
+          }),
+        });
+        localNovelDraft = "";
+        localScriptDraft = "";
+        continue;
+      }
+
+      // 阶段 4：若存在未就绪的首尾帧画面，自动批量生成并等待完成
+      const missingKfShots = shots.filter((s) =>
+        s.shotCategory === "action_fl2va" ? !(s.firstFrameUrl && s.lastFrameUrl) : !s.firstFrameUrl
+      ).length;
+      if (missingKfShots > 0) {
+        setAutoPilotPhase(`🖼️ [4/5] 正在生成 ${missingKfShots} 个镜头的首尾画面...`);
+        const kfRes = await apiFetch(`/api/episodes/${ep.id}/batchKeyframes`, {
+          method: "POST",
+          body: JSON.stringify({ limit: 100, onlyMissing: true }),
+        });
+        if (kfRes.count > 0) {
+          const ok = await waitForProjectTasksIdle(
+            currentState.activeProjectId,
+            "🖼️ [4/5] 正在绘制分镜首尾画面"
+          );
+          if (!ok || currentState.autoPilotAbort) return;
+          const afterShots = (currentState.workspace && currentState.workspace.shots) || [];
+          const afterMissingKf = afterShots.filter((s) =>
+            s.shotCategory === "action_fl2va" ? !(s.firstFrameUrl && s.lastFrameUrl) : !s.firstFrameUrl
+          ).length;
+          if (afterMissingKf >= missingKfShots) {
+            stopAutoPilot("⚠️ 部分分镜画面生成失败，已暂停自动推进，请检查右侧任务队列");
+            return;
+          }
+          continue;
+        }
+      }
+
+      // 阶段 5a：若存在未出片的镜头，自动排队生成视频并等待完成
+      const missingVidShots = shots.filter((s) => !s.videoUrl).length;
+      if (missingVidShots > 0) {
+        setAutoPilotPhase(`🎥 [5/5] 正在无影云端排队渲染 ${missingVidShots} 个分镜视频...`);
+        const vidRes = await apiFetch(`/api/episodes/${ep.id}/batchVideos`, {
+          method: "POST",
+          body: JSON.stringify({ onlyPending: true }),
+        });
+        if (vidRes.count > 0) {
+          const ok = await waitForProjectTasksIdle(
+            currentState.activeProjectId,
+            "🎥 [5/5] 正在渲染有声分镜视频"
+          );
+          if (!ok || currentState.autoPilotAbort) return;
+          const afterShots = (currentState.workspace && currentState.workspace.shots) || [];
+          const afterMissingVid = afterShots.filter((s) => !s.videoUrl).length;
+          if (afterMissingVid >= missingVidShots) {
+            stopAutoPilot("⚠️ 部分镜头视频渲染失败，已暂停自动推进，请检查无影连接或重试失败任务");
+            return;
+          }
+          continue;
+        }
+      }
+
+      // 阶段 5b：全部视频已完成，自动合成整集 MP4
+      if (!ep.masterVideoUrl) {
+        setAutoPilotPhase("🎞️ [5/5] 所有分镜已出片！正在自动拼接合成整集完整 MP4...");
+        await apiFetch(`/api/episodes/${ep.id}/mergeMaster`, {
+          method: "POST",
+          body: JSON.stringify({}),
+        });
+        await loadWorkspace(currentState.activeProjectId, currentState.activeEpisodeId);
+        currentState.autoPilotRunning = false;
+        currentState.autoPilotPhaseText = "";
+        updateWorkflowStepper(
+          (currentState.workspace && currentState.workspace.shots) || [],
+          currentState.workspace && currentState.workspace.activeEpisode,
+          (currentState.workspace && currentState.workspace.assets) || []
+        );
+        showToast("🎉 一键连续出片全部完成！整集 MP4 已合成就绪！", "success");
+        return;
+      }
+
+      // 全部已完成
+      currentState.autoPilotRunning = false;
+      currentState.autoPilotPhaseText = "";
+      updateWorkflowStepper(shots, ep, assets);
+      showToast("✅ 本集所有步骤均已完成！", "success");
+      return;
+    }
+  } catch (err) {
+    stopAutoPilot(`自动流水线异常中断: ${err.message}`);
+    return;
+  }
+
+  if (currentState.autoPilotRunning) {
+    stopAutoPilot("");
   }
 }
 

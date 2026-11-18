@@ -333,6 +333,77 @@ body {
   gap: 14px;
 }
 
+/* 一键智能连续出片控制台 (Auto-Pilot Bar) */
+.autoPilotBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  background: linear-gradient(90deg, rgba(20, 27, 40, 0.96) 0%, rgba(15, 23, 42, 0.92) 100%);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  padding: 10px 14px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.autoPilotBar.running {
+  border-color: var(--emerald-ok);
+  box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.28), 0 4px 16px rgba(16, 185, 129, 0.14);
+}
+
+.autoPilotInfo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.autoPilotBadge {
+  font-size: 11px;
+  font-weight: 800;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(56, 189, 248, 0.14);
+  color: var(--cyan-monitor);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  white-space: nowrap;
+}
+
+.autoPilotBar.running .autoPilotBadge {
+  background: rgba(16, 185, 129, 0.16);
+  color: var(--emerald-ok);
+  border-color: rgba(16, 185, 129, 0.45);
+}
+
+.autoPilotText {
+  font-size: 12.5px;
+  color: var(--text-primary);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.autoPilotActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.btnDanger {
+  background: rgba(244, 63, 94, 0.16);
+  color: #fda4af;
+  border: 1px solid rgba(244, 63, 94, 0.45);
+}
+
+.btnDanger:hover:not(:disabled) {
+  background: rgba(244, 63, 94, 0.26);
+  border-color: var(--rose-err);
+}
+
 /* 5步黄金流水线导航栏 (Workflow Stepper) */
 .workflowStepper {
   display: grid;
@@ -366,6 +437,17 @@ body {
   border-color: var(--amber-gold);
   background: linear-gradient(145deg, rgba(245, 158, 11, 0.12) 0%, rgba(20, 27, 40, 0.95) 100%);
   box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.3);
+}
+
+.stepCard.completed {
+  border-color: rgba(16, 185, 129, 0.45);
+  background: linear-gradient(145deg, rgba(16, 185, 129, 0.08) 0%, rgba(20, 27, 40, 0.94) 100%);
+}
+
+.stepCard.completed .stepNumberBadge {
+  background: rgba(16, 185, 129, 0.18);
+  color: var(--emerald-ok);
+  border: 1px solid rgba(16, 185, 129, 0.35);
 }
 
 .stepHeaderRow {

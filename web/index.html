@@ -13,7 +13,7 @@
     <div class="brandGroup">
       <span class="brandBadge">DRAMAFORGE</span>
       <span class="brandTitle">DramaForge Studio</span>
-      <span class="brandSubtitle">4 步傻瓜式 AI 短剧创作台 · 首尾画面锁死动作 · 前后镜头无缝接力</span>
+      <span class="brandSubtitle">5 步首尾帧工业流 · 一键连续出片 · 前后镜头无缝接力</span>
     </div>
     <div class="topStatusActions">
       <span id="saveIndicator" class="saveIndicator">✓ 已自动保存</span>
@@ -65,6 +65,22 @@
 
     <!-- 中央：5 步黄金流水线分镜工作台 -->
     <section class="centerStage" id="centerStageScroller">
+      <!-- 一键智能连续出片控制台 (Auto-Pilot Bar) -->
+      <div id="autoPilotBar" class="autoPilotBar">
+        <div class="autoPilotInfo">
+          <span class="autoPilotBadge" id="autoPilotBadge">⚡ 智能导航</span>
+          <span class="autoPilotText" id="autoPilotStatusText">正在检测当前剧集进度...</span>
+        </div>
+        <div class="autoPilotActions">
+          <button id="btnRunNextStep" class="btn btnSmall btnCyan" onclick="runRecommendedStep()">
+            ▶ 执行当前推荐步
+          </button>
+          <button id="btnAutoPilot" class="btn btnSmall btnPrimary" onclick="toggleAutoPilot()" title="自动串联执行：改写/定妆/拆解分镜/生成画面/排队出视频/合成完整 MP4">
+            🚀 一键连续出片
+          </button>
+        </div>
+      </div>
+
       <!-- 顶部 5 步短剧制作流水线导航栏 (Workflow Stepper) -->
       <nav class="workflowStepper" aria-label="短剧制作五步向导">
         <!-- 步骤 1 -->
@@ -287,6 +303,9 @@
           </button>
           <button id="btnStep2Breakdown" class="btn btnCyan" onclick="submitScriptBreakdown(false)">
             🎬 直接按剧本生成分镜表
+          </button>
+          <button id="btnStepAutoChain" class="btn btnEmerald" onclick="closeModal('scriptModal'); startAutoPilotFromScript();" title="自动完成改写、定妆图、分镜拆解与后续生成">
+            🚀 改写并一键连续出片
           </button>
         </div>
       </div>
