@@ -78,6 +78,7 @@ def initDatabase():
                 eraTag TEXT DEFAULT '',  -- 区分前世/今生/不同时期状态，防止同名串台
                 visualPrompt TEXT DEFAULT '',
                 voiceProfile TEXT DEFAULT '',
+                voiceRefUrl TEXT DEFAULT '',
                 imageUrl TEXT DEFAULT '',
                 createdAt REAL NOT NULL,
                 updatedAt REAL NOT NULL,
@@ -147,15 +148,21 @@ def initDatabase():
             "llmApiKey": os.environ.get("LLM_API_KEY", ""),
             "llmModel": os.environ.get("LLM_MODEL", "deepseek-chat"),
             "defaultVideoEngine": "h3_fl2va",
-            "enableUpscale3d": "0",
-            "h3SamplingSteps": "12",
+            "keyframeEngine": "h3_still",
+            "enableUpscale3d": "1",
+            "h3SamplingSteps": "16",
+            "strictDualFrameAnchor": "0",
         }
+        # 平滑迁移旧库 assets 表，补充角色固定声纹参考音频字段 voiceRefUrl
+        assetCols = {r[1] for r in conn.execute("PRAGMA table_info(assets)").fetchall()}
+        if "voiceRefUrl" not in assetCols:
+            conn.execute("ALTER TABLE assets ADD COLUMN voiceRefUrl TEXT DEFAULT ''")
         for k, v in defaults.items():
             conn.execute(
                 "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
                 (k, str(v)),
             )
-        conn.execute("UPDATE settings SET value='12' WHERE key='h3SamplingSteps' AND value='20'")
+        conn.execute("UPDATE settings SET value='16' WHERE key='h3SamplingSteps' AND value IN ('8', '12', '20')")
         # 清理上次进程退出遗留的僵尸 running 任务，并恢复对应镜头状态
         nowTs = time.time()
         conn.execute(

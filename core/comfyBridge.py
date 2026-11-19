@@ -4,9 +4,11 @@
 自主版权 AI 短剧工业化工作台 - 无影云端 ComfyUI 双关键帧与多引擎视频桥接器 (comfyBridge.py)
 核心能力：
 1. Flux3-Klein 高清分镜首帧 (firstFrame) 与尾帧 (lastFrame) 生成；
-2. MiniMax-H3 FL2VA (MiniMaxH3ImageToVideo) 首尾帧双锚点音画同步生成（支持 3D 潜空间超分）；
-3. Wan 2.2 14B MoE 高低噪双专家电影级图生视频；
-4. 云端在线状态探测、图片上传、异步队列轮询与结果自动回写。
+2. MiniMax-H3 FL2VA (MiniMaxH3ImageToVideo) 首尾帧双锚点音画同步生成（支持 PDD 8 步加速与 3D 潜空间超分）；
+3. MiniMax-H3 Ref2VA (MiniMaxH3ReferenceToVideo) 多图参考主体一致性生成（支持 PDD 8 步加速与 3D 潜空间超分）；
+4. FastH3 8 步极速图生视频；
+5. Wan 2.2 14B MoE 高低噪双专家电影级图生视频；
+6. 云端在线状态探测、图片上传、异步队列轮询与结果自动回写。
 """
 
 import os
@@ -33,6 +35,8 @@ from .continuityManager import (
     resolveMediaUrlToPath,
     syncEpisodeFrameLocks,
     extractHighResLastFrameFromVideo,
+    extractAndLockCharacterVoiceBank,
+    backfillEpisodeVoiceBanks,
     inspectVideoQuality,
     findFfmpegBinary,
 )
@@ -169,6 +173,183 @@ def uploadImageToComfy(imagePath, comfyEndpoint):
         raise RuntimeError(f"上传关键帧至云端超时或失败: {lastErr}")
 
 
+def uploadAudioToComfy(audioPath, comfyEndpoint):
+    """将本地角色参考音色音频上传至无影云端 ComfyUI input 目录（带去重缓存）"""
+    endpoint = comfyEndpoint.rstrip("/")
+    pathObj = Path(audioPath)
+    if not pathObj.exists():
+        raise FileNotFoundError(f"参考音频文件不存在: {audioPath}")
+    stat = pathObj.stat()
+    cacheKey = (endpoint, str(pathObj.resolve()), stat.st_mtime_ns, stat.st_size)
+    with _UPLOAD_LOCK:
+        cached = _UPLOADED_IMAGE_CACHE.get(cacheKey)
+        if cached:
+            return cached
+
+    boundary = f"----DramaForgeAudio{uuid.uuid4().hex}"
+    filename = pathObj.name
+    fileBytes = pathObj.read_bytes()
+    ext = pathObj.suffix.lower()
+    mimeType = "audio/wav" if ext == ".wav" else ("audio/mpeg" if ext == ".mp3" else "application/octet-stream")
+    body = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="image"; filename="{filename}"\r\n'
+        f"Content-Type: {mimeType}\r\n\r\n"
+    ).encode("utf-8") + fileBytes + f"\r\n--{boundary}--\r\n".encode("utf-8")
+
+    req = urllib.request.Request(
+        f"{endpoint}/upload/image",
+        data=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        method="POST",
+    )
+    with _DIRECT_HTTP_OPENER.open(req, timeout=30) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+        uploadedName = data.get("name") or filename
+        with _UPLOAD_LOCK:
+            _UPLOADED_IMAGE_CACHE[cacheKey] = uploadedName
+        return uploadedName
+
+
+def buildH3StillKeyframeWorkflow(
+    promptText,
+    width=1344,
+    height=768,
+    seed=None,
+    sourceImageUploadedName=None,
+    referenceUploadedNames=None,
+    sourceFidelity=0.72,
+):
+    """
+    构建无影云端 MiniMax-H3 (33B + Qwen3-VL 32B + PDD 8 步加速) 电影级关键帧生图与参考编辑工作流：
+    - 有源图/参考图时：使用 Ref2VA + H3ReferenceEditPrepare（最多支持 9 张参考图，用于角色定妆照锁定与首帧->尾帧精准演进编辑）；
+    - 无参考图时：使用 FL2VA + H3TextToImagePrepare（用于高指令遵循度的中文古装/写实首帧与定妆图生成）。
+    """
+    if not seed or seed < 0:
+        seed = random.randint(1, 2147483647)
+
+    width = max(384, (int(width) // 32) * 32)
+    height = max(384, (int(height) // 32) * 32)
+
+    allRefs = []
+    if sourceImageUploadedName:
+        allRefs.append(sourceImageUploadedName)
+    for r in (referenceUploadedNames or []):
+        if r and r not in allRefs and len(allRefs) < 9:
+            allRefs.append(r)
+
+    useRefEdit = len(allRefs) > 0
+    unetName = "minimax_h3_ref2va_pruned_int8_convrot.safetensors" if useRefEdit else "minimax_h3_fl2va_pruned_int8_convrot.safetensors"
+    pddName = "minimax_h3_ref2va_pdd_acc_8step_comfyui.safetensors" if useRefEdit else "minimax_h3_fl2va_pdd_acc_8step_comfyui.safetensors"
+
+    wf = {
+        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": unetName, "weight_dtype": "default"}},
+        "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", "type": "minimax", "device": "default"}},
+        "3": {"class_type": "VAELoader", "inputs": {"vae_name": "minimax_h3_video_vae_fp16.safetensors"}},
+        "5": {"class_type": "MiniMaxH3MemoryEfficientSageAttentionPatch", "inputs": {"model": ["1", 0]}},
+        "6": {"class_type": "MiniMaxH3SigmaShift", "inputs": {"model": ["5", 0], "shift_video": 12.0, "shift_audio": 3.0}},
+        "6b": {
+            "class_type": "MiniMaxH3PDDAccApply",
+            "inputs": {
+                "model": ["6", 0],
+                "pdd_file": pddName,
+                "nfe": "8",
+                "lora_strength": 1.0,
+                "head_strength": 1.0,
+                "on_off_grid": "error",
+                "partition_check": "error",
+            },
+        },
+    }
+
+    if useRefEdit:
+        wf["7_1"] = {"class_type": "LoadImage", "inputs": {"image": allRefs[0]}}
+        editInputs = {
+            "clip": ["2", 0],
+            "vae": ["3", 0],
+            "source_image": ["7_1", 0],
+            "edit_instruction": promptText,
+            "width": width,
+            "height": height,
+            "quality_profile": "recommended | 5 frames",
+            "source_fidelity": float(sourceFidelity),
+            "source_fit": "crop_center",
+            "reference_detail": "match_generation_area",
+            "optimize_for_still": True,
+        }
+        for idx, extraRef in enumerate(allRefs[1:9], start=2):
+            nodeId = f"7_{idx}"
+            wf[nodeId] = {"class_type": "LoadImage", "inputs": {"image": extraRef}}
+            editInputs[f"reference_image_{idx}"] = [nodeId, 0]
+        wf["9"] = {"class_type": "H3ReferenceEditPrepare", "inputs": editInputs}
+    else:
+        wf["9"] = {
+            "class_type": "H3TextToImagePrepare",
+            "inputs": {
+                "clip": ["2", 0],
+                "prompt": promptText,
+                "width": width,
+                "height": height,
+                "quality_profile": "recommended | 5 frames",
+                "optimize_for_still": True,
+            },
+        }
+
+    wf["10"] = {"class_type": "BasicGuider", "inputs": {"model": ["6b", 0], "conditioning": ["9", 0]}}
+    wf["12"] = {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "euler"}}
+    wf["13"] = {"class_type": "RandomNoise", "inputs": {"noise_seed": seed}}
+    wf["14"] = {
+        "class_type": "SamplerCustomAdvanced",
+        "inputs": {
+            "noise": ["13", 0],
+            "guider": ["10", 0],
+            "sampler": ["12", 0],
+            "sigmas": ["6b", 1],
+            "latent_image": ["9", 1],
+        },
+    }
+    wf["15"] = {
+        "class_type": "MiniMaxH3StillDecodeT8",
+        "inputs": {"av_latent": ["14", 0], "video_vae": ["3", 0], "frame_selection": "middle", "frame_index": 0},
+    }
+    wf["16"] = {"class_type": "SaveImage", "inputs": {"images": ["15", 0], "filename_prefix": f"DS_H3_KF_{int(time.time())}"}}
+    return wf
+
+
+def buildKeyframeWorkflow(
+    promptText,
+    width=1344,
+    height=768,
+    seed=None,
+    sourceImageUploadedName=None,
+    referenceUploadedNames=None,
+    sourceFidelity=0.72,
+):
+    """根据全局 keyframeEngine 设置自动分发至 H3 33B 电影级生图（默认）或 Flux3 备用生图"""
+    kfEngine = str(getSettingValue("keyframeEngine", "h3_still") or "h3_still").strip().lower()
+    if kfEngine == "flux3":
+        return buildFlux3KeyframeWorkflow(
+            promptText,
+            width=width,
+            height=height,
+            steps=26,
+            guidance=3.5,
+            seed=seed,
+            referenceUploadedNames=referenceUploadedNames,
+            initImageUploadedName=sourceImageUploadedName,
+            denoise=0.75 if sourceImageUploadedName else 1.0,
+        )
+    return buildH3StillKeyframeWorkflow(
+        promptText,
+        width=width,
+        height=height,
+        seed=seed,
+        sourceImageUploadedName=sourceImageUploadedName,
+        referenceUploadedNames=referenceUploadedNames,
+        sourceFidelity=sourceFidelity,
+    )
+
+
 def buildFlux3KeyframeWorkflow(
     promptText,
     width=1472,
@@ -228,7 +409,7 @@ def buildFlux3KeyframeWorkflow(
         "inputs": {
             "seed": seed,
             "steps": int(steps),
-            "cfg": 1.0,
+            "cfg": 2.5,
             "sampler_name": "euler",
             "scheduler": "beta",
             "denoise": float(denoise),
@@ -243,6 +424,105 @@ def buildFlux3KeyframeWorkflow(
     return wf
 
 
+def _appendH3SamplerAndDecode(
+    wf,
+    modelRef,
+    conditioningRef,
+    latentRef,
+    steps=8,
+    seed=None,
+    enableUpscale3d=False,
+    filenamePrefix="DS_H3",
+    pddFile=None,
+):
+    """为 MiniMax-H3 系列工作流统一挂载 PDD 8 步加速/标准采样器与 3D 潜空间超分解码链路"""
+    if not seed or seed < 0:
+        seed = random.randint(1, 2147483647)
+
+    stepInt = int(steps or 8)
+    usePdd = bool(pddFile) and stepInt <= 8
+
+    if usePdd:
+        nfeStr = "4" if stepInt <= 4 else ("6" if stepInt <= 6 else "8")
+        wf["6b"] = {
+            "class_type": "MiniMaxH3PDDAccApply",
+            "inputs": {
+                "model": modelRef,
+                "pdd_file": pddFile,
+                "nfe": nfeStr,
+                "lora_strength": 1.0,
+                "head_strength": 1.0,
+                "on_off_grid": "error",
+                "partition_check": "error",
+            },
+        }
+        activeModelRef = ["6b", 0]
+        sigmasRef = ["6b", 1]
+        samplerName = "euler"
+    else:
+        activeModelRef = modelRef
+        wf["11"] = {
+            "class_type": "BasicScheduler",
+            "inputs": {"model": activeModelRef, "scheduler": "simple", "steps": stepInt, "denoise": 1.0},
+        }
+        sigmasRef = ["11", 0]
+        samplerName = "res_multistep"
+
+    wf["10"] = {"class_type": "BasicGuider", "inputs": {"model": activeModelRef, "conditioning": conditioningRef}}
+    wf["12"] = {"class_type": "KSamplerSelect", "inputs": {"sampler_name": samplerName}}
+    wf["13"] = {"class_type": "RandomNoise", "inputs": {"noise_seed": seed}}
+    wf["14"] = {
+        "class_type": "SamplerCustomAdvanced",
+        "inputs": {
+            "noise": ["13", 0],
+            "guider": ["10", 0],
+            "sampler": ["12", 0],
+            "sigmas": sigmasRef,
+            "latent_image": latentRef,
+        },
+    }
+
+    if enableUpscale3d:
+        # 使用 MiniMaxH3AVDecodeT8 安全拆包音画联合 NestedTensor，避免 MinimaxH3LatentUpscalerNode3D 直接克隆 NestedTensor 崩溃
+        wf["15"] = {
+            "class_type": "MiniMaxH3AVDecodeT8",
+            "inputs": {"av_latent": ["14", 0], "video_vae": ["3", 0], "audio_vae": ["4", 0]},
+        }
+        wf["16"] = {
+            "class_type": "MinimaxH3LatentUpscalerNode3D",
+            "inputs": {
+                "latent": ["15", 2],
+                "model_name": "minimax_h3_latent_upscaler_3d_fp16.safetensors",
+                "scale": 1.5,
+                "device": "cuda",
+                "precision": "fp16",
+            },
+        }
+        wf["17"] = {"class_type": "VAEDecode", "inputs": {"samples": ["16", 0], "vae": ["3", 0]}}
+        imagesOut = ["17", 0]
+        audioOut = ["15", 1]
+    else:
+        wf["16"] = {"class_type": "VAEDecode", "inputs": {"samples": ["14", 0], "vae": ["3", 0]}}
+        wf["17"] = {"class_type": "VAEDecodeAudio", "inputs": {"samples": ["14", 0], "vae": ["4", 0]}}
+        imagesOut = ["16", 0]
+        audioOut = ["17", 0]
+
+    wf["18"] = {
+        "class_type": "VHS_VideoCombine",
+        "inputs": {
+            "images": imagesOut,
+            "audio": audioOut,
+            "frame_rate": 24.0,
+            "loop_count": 0,
+            "pingpong": False,
+            "format": "video/h264-mp4",
+            "save_output": True,
+            "filename_prefix": f"{filenamePrefix}_{int(time.time())}",
+        },
+    }
+    return wf
+
+
 def buildH3Fl2vaWorkflow(
     promptText,
     firstFrameUploadedName,
@@ -250,21 +530,16 @@ def buildH3Fl2vaWorkflow(
     width=1344,
     height=768,
     length=124,
-    steps=16,
+    steps=8,
     enableUpscale3d=False,
     seed=None,
 ):
     """
     构建无影云端 MiniMax-H3 FL2VA (MiniMaxH3ImageToVideo) 首尾帧双锚点工作流：
-    - 核心优势：直接将 first_frame 和 last_frame 注入潜空间首尾边界，彻底解决只给参考图导致的
-      “动作演一半停住”、“情节表达不出”与“空间透视散架”问题！
-    - 使用完整原生 Transformer 块采样（不跳过 34 块），确保大幅度物理动作演进与口型表现力；
-    - 直接使用原生 VAEDecode 与 VAEDecodeAudio 解包音画联合 NestedTensor，避免第三方 MinimaxH3LatentUpscalerNode3D
-      因调用 NestedTensor.clone() 引发 AttributeError 崩溃。
+    - 默认挂载 PDD 8 步极速加速 (minimax_h3_fl2va_pdd_acc_8step_comfyui.safetensors)；
+    - 当 steps > 8 时自动回退完整原生多步采样；
+    - 支持通过 MiniMaxH3AVDecodeT8 + MinimaxH3LatentUpscalerNode3D 安全执行 3D 潜空间超分。
     """
-    if not seed or seed < 0:
-        seed = random.randint(1, 2147483647)
-
     width = max(384, (int(width) // 32) * 32)
     height = max(384, (int(height) // 32) * 32)
     length = max(73, (int(length) // 17) * 17 + 5)
@@ -294,38 +569,132 @@ def buildH3Fl2vaWorkflow(
         i2vInputs["last_frame"] = ["8", 0]
 
     wf["9"] = {"class_type": "MiniMaxH3ImageToVideo", "inputs": i2vInputs}
-    wf["10"] = {"class_type": "BasicGuider", "inputs": {"model": ["6", 0], "conditioning": ["9", 0]}}
-    wf["11"] = {"class_type": "BasicScheduler", "inputs": {"model": ["6", 0], "scheduler": "simple", "steps": int(steps), "denoise": 1.0}}
-    wf["12"] = {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "res_multistep"}}
-    wf["13"] = {"class_type": "RandomNoise", "inputs": {"noise_seed": seed}}
-    wf["14"] = {
-        "class_type": "SamplerCustomAdvanced",
-        "inputs": {
-            "noise": ["13", 0],
-            "guider": ["10", 0],
-            "sampler": ["12", 0],
-            "sigmas": ["11", 0],
-            "latent_image": ["9", 1],
-        },
+    return _appendH3SamplerAndDecode(
+        wf,
+        modelRef=["6", 0],
+        conditioningRef=["9", 0],
+        latentRef=["9", 1],
+        steps=steps,
+        seed=seed,
+        enableUpscale3d=enableUpscale3d,
+        filenamePrefix="DS_H3_FL2VA",
+        pddFile="minimax_h3_fl2va_pdd_acc_8step_comfyui.safetensors",
+    )
+
+
+def buildH3Ref2vaWorkflow(
+    promptText,
+    firstFrameUploadedName,
+    referenceUploadedNames=None,
+    refAudioUploadedName=None,
+    width=1344,
+    height=768,
+    length=124,
+    steps=8,
+    enableUpscale3d=False,
+    seed=None,
+):
+    """
+    构建无影云端 MiniMax-H3 Ref2VA (MiniMaxH3ReferenceToVideo) 多图参考主体一致性工作流：
+    - 使用 minimax_h3_ref2va_pruned_int8_convrot.safetensors + PDD 8 步加速；
+    - 支持同时注入首帧、角色/场景参考图与角色参考音色音频 (ref_audio_1)，保持跨镜头人物外貌与声音高度一致。
+    """
+    width = max(384, (int(width) // 32) * 32)
+    height = max(384, (int(height) // 32) * 32)
+    length = max(73, (int(length) // 17) * 17 + 5)
+
+    wf = {
+        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "minimax_h3_ref2va_pruned_int8_convrot.safetensors", "weight_dtype": "default"}},
+        "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", "type": "minimax", "device": "default"}},
+        "3": {"class_type": "VAELoader", "inputs": {"vae_name": "minimax_h3_video_vae_fp16.safetensors"}},
+        "4": {"class_type": "VAELoader", "inputs": {"vae_name": "minimax_h3_audio_vae_fp32.safetensors"}},
+        "5": {"class_type": "MiniMaxH3MemoryEfficientSageAttentionPatch", "inputs": {"model": ["1", 0]}},
+        "6": {"class_type": "MiniMaxH3SigmaShift", "inputs": {"model": ["5", 0], "shift_video": 12.0, "shift_audio": 3.0}},
     }
 
-    videoLatentOut = ["14", 0]
-    wf["16"] = {"class_type": "VAEDecode", "inputs": {"samples": videoLatentOut, "vae": ["3", 0]}}
-    wf["17"] = {"class_type": "VAEDecodeAudio", "inputs": {"samples": ["14", 0], "vae": ["4", 0]}}
-    wf["18"] = {
-        "class_type": "VHS_VideoCombine",
-        "inputs": {
-            "images": ["16", 0],
-            "audio": ["17", 0],
-            "frame_rate": 24.0,
-            "loop_count": 0,
-            "pingpong": False,
-            "format": "video/h264-mp4",
-            "save_output": True,
-            "filename_prefix": f"DS_H3_FL2VA_{int(time.time())}",
+    refList = [firstFrameUploadedName] if firstFrameUploadedName else []
+    for refName in (referenceUploadedNames or []):
+        if refName and refName not in refList and len(refList) < 9:
+            refList.append(refName)
+
+    refInputs = {
+        "clip": ["2", 0],
+        "vae": ["3", 0],
+        "audio_vae": ["4", 0],
+        "prompt": promptText,
+        "width": width,
+        "height": height,
+        "length": length,
+        "ref_image_size": "match",
+    }
+    for idx, refName in enumerate(refList, start=1):
+        nodeId = f"7_{idx}"
+        wf[nodeId] = {"class_type": "LoadImage", "inputs": {"image": refName}}
+        refInputs[f"ref_image_{idx}"] = [nodeId, 0]
+
+    if refAudioUploadedName:
+        wf["7_a1"] = {"class_type": "LoadAudio", "inputs": {"audio": refAudioUploadedName}}
+        refInputs["ref_audio_1"] = ["7_a1", 0]
+
+    wf["9"] = {"class_type": "MiniMaxH3ReferenceToVideo", "inputs": refInputs}
+    return _appendH3SamplerAndDecode(
+        wf,
+        modelRef=["6", 0],
+        conditioningRef=["9", 0],
+        latentRef=["9", 1],
+        steps=steps,
+        seed=seed,
+        enableUpscale3d=enableUpscale3d,
+        filenamePrefix="DS_H3_REF2VA",
+        pddFile="minimax_h3_ref2va_pdd_acc_8step_comfyui.safetensors",
+    )
+
+
+def buildFastH3Workflow(
+    promptText,
+    firstFrameUploadedName,
+    width=1344,
+    height=768,
+    length=124,
+    steps=8,
+    enableUpscale3d=False,
+    seed=None,
+):
+    """构建无影云端 FastH3 (fastvideo_fasth3_8step_v2_pruned_int8_convrot) 8 步极速单首帧工作流"""
+    width = max(384, (int(width) // 32) * 32)
+    height = max(384, (int(height) // 32) * 32)
+    length = max(73, (int(length) // 17) * 17 + 5)
+
+    wf = {
+        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "fastvideo_fasth3_8step_v2_pruned_int8_convrot.safetensors", "weight_dtype": "default"}},
+        "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", "type": "minimax", "device": "default"}},
+        "3": {"class_type": "VAELoader", "inputs": {"vae_name": "minimax_h3_video_vae_fp16.safetensors"}},
+        "4": {"class_type": "VAELoader", "inputs": {"vae_name": "minimax_h3_audio_vae_fp32.safetensors"}},
+        "7": {"class_type": "LoadImage", "inputs": {"image": firstFrameUploadedName}},
+        "9": {
+            "class_type": "MiniMaxH3ImageToVideo",
+            "inputs": {
+                "clip": ["2", 0],
+                "vae": ["3", 0],
+                "first_frame": ["7", 0],
+                "prompt": promptText,
+                "width": width,
+                "height": height,
+                "length": length,
+            },
         },
     }
-    return wf
+    return _appendH3SamplerAndDecode(
+        wf,
+        modelRef=["1", 0],
+        conditioningRef=["9", 0],
+        latentRef=["9", 1],
+        steps=min(8, max(4, int(steps or 8))),
+        seed=seed,
+        enableUpscale3d=enableUpscale3d,
+        filenamePrefix="DS_FASTH3",
+        pddFile=None,
+    )
 
 
 def buildWan22MoeWorkflow(promptText, firstFrameUploadedName, width=1280, height=720, numFrames=81, steps=20, seed=None):
@@ -621,7 +990,7 @@ def enqueueAssetImageTask(assetId):
                 comfyStatus = checkComfyStatus()
                 if not comfyStatus["online"]:
                     raise RuntimeError(f"云端 ComfyUI 算力服务未在线 ({comfyStatus.get('endpoint')})，已拒绝生成本地假设定图")
-                wf = buildFlux3KeyframeWorkflow(promptText, width=width, height=height, steps=26, guidance=3.5, seed=freshSeed)
+                wf = buildKeyframeWorkflow(promptText, width=width, height=height, seed=freshSeed)
                 _, kfUrl, kfPath = _submitAndPollComfyWorkflow(wf, comfyStatus["endpoint"], expectedType="image")
                 localName = f"asset_ref_{assetId}_{int(time.time()*1000)}.png"
                 assetDest = ASSETS_DIR / localName
@@ -682,6 +1051,95 @@ def _collectShotCharacterRefUploads(shotRow, projectAssets, comfyEndpoint):
             except Exception:
                 pass
     return charUploads[:2]
+
+
+def _collectShotVoiceRefUpload(shotRow, projectAssets, comfyEndpoint):
+    """收集本镜主说话角色的固定声纹参考音频 (assets.voiceRefUrl) 并上传至无影云端，供 Ref2VA 锁声"""
+    assetMap = {str(a.get("name", "")).lstrip("@").strip(): a for a in (projectAssets or [])}
+    candidateNames = []
+    try:
+        for line in json.loads(shotRow.get("dialogueJson") or "[]"):
+            if isinstance(line, dict) and str(line.get("speaker") or "").strip():
+                candidateNames.append(str(line["speaker"]).lstrip("@").strip())
+    except Exception:
+        pass
+    try:
+        for r in json.loads(shotRow.get("referenceAssetsJson") or "[]"):
+            if isinstance(r, dict) and r.get("role") == "character" and str(r.get("asset") or "").strip():
+                candidateNames.append(str(r["asset"]).lstrip("@").strip())
+    except Exception:
+        pass
+
+    for name in candidateNames:
+        aObj = assetMap.get(name)
+        if not aObj or not aObj.get("voiceRefUrl"):
+            continue
+        localPath = resolveMediaUrlToPath(aObj["voiceRefUrl"])
+        if localPath and localPath.exists():
+            try:
+                return uploadAudioToComfy(localPath, comfyEndpoint)
+            except Exception:
+                continue
+    return None
+
+
+def _findSameSceneCameraRigMasterPlate(shotRow, comfyEndpoint):
+    """
+    【专业级同场多机位母板复用 (Multi-Cam Rig Master Plate)】
+    在同一场戏（如 [S01]）中，当正反打切回同一角色 + 同一景别机位时，
+    自动查找该角色在本场戏首次生成的高清静态首帧作为 <Picture 1> 机位母板，
+    确保正反打切回时背景厅堂柱子、光线、机位角度与人物长相 100% 锁定在同一时空！
+    """
+    import re
+    titleStr = str(shotRow.get("title") or "")
+    mScene = re.search(r"\[(S\d+)\]", titleStr)
+    scenePrefix = mScene.group(1) if mScene else ""
+
+    def _charTuple(rowDict):
+        try:
+            refs = json.loads(rowDict.get("referenceAssetsJson") or "[]")
+        except Exception:
+            refs = []
+        return tuple(
+            str(r.get("asset") or "").lstrip("@").strip()
+            for r in refs
+            if isinstance(r, dict) and r.get("role") == "character" and str(r.get("asset") or "").strip()
+        )
+
+    def _framingBucket(fText):
+        t = str(fText or "").lower()
+        if any(k in t for k in ("extreme close", "close-up", "closeup", "特写")):
+            return "closeup"
+        if any(k in t for k in ("wide", "long", "establishing", "远景", "全景")):
+            return "wide"
+        return "medium"
+
+    targetChars = _charTuple(shotRow)
+    if not targetChars:
+        return None
+    targetBucket = _framingBucket(shotRow.get("cameraFraming"))
+
+    with closing(getDbConnection()) as conn:
+        earlierShots = conn.execute(
+            "SELECT * FROM shots WHERE episodeId=? AND shotNumber < ? AND firstFrameUrl != '' ORDER BY shotNumber ASC",
+            (shotRow["episodeId"], shotRow["shotNumber"]),
+        ).fetchall()
+
+    for earlier in earlierShots:
+        eDict = dict(earlier)
+        eUrl = str(eDict.get("firstFrameUrl") or "")
+        if not eUrl or eUrl.startswith("/media/keyframes/extracted_last_"):
+            continue
+        if scenePrefix and f"[{scenePrefix}]" not in str(eDict.get("title") or ""):
+            continue
+        if _charTuple(eDict) == targetChars and _framingBucket(eDict.get("cameraFraming")) == targetBucket:
+            localPlate = resolveMediaUrlToPath(eUrl)
+            if localPlate and localPlate.exists():
+                try:
+                    return uploadImageToComfy(localPlate, comfyEndpoint)
+                except Exception:
+                    continue
+    return None
 
 
 def enqueueKeyframeTask(shotId, frameRole="both", forceRegenerate=True):
@@ -749,26 +1207,44 @@ def enqueueKeyframeTask(shotId, frameRole="both", forceRegenerate=True):
                 firstPathLocal = resolveMediaUrlToPath(firstUrl) if firstUrl else None
 
                 if needFirst:
-                    wf1 = buildFlux3KeyframeWorkflow(
-                        lockedFirstPrompt,
+                    rigMasterPlate = _findSameSceneCameraRigMasterPlate(shotRow, epUrl)
+                    firstPromptForRender = (
+                        f"Keep the exact same camera angle, room architecture, background props, lighting and character identity from <Picture 1>, "
+                        f"update the character's acting expression and gesture for this shot: {lockedFirstPrompt}"
+                        if rigMasterPlate
+                        else lockedFirstPrompt
+                    )
+                    wf1 = buildKeyframeWorkflow(
+                        firstPromptForRender,
                         width=width,
                         height=height,
                         seed=sharedSeed,
+                        sourceImageUploadedName=rigMasterPlate,
                         referenceUploadedNames=charRefUploads,
+                        sourceFidelity=0.78 if rigMasterPlate else 0.65,
                     )
                     _, firstUrl, firstPathLocal = _submitAndPollComfyWorkflow(wf1, epUrl, expectedType="image")
 
                 if needLast:
-                    # 尾帧仅挂载角色定妆图并使用独立种子，避免把首帧作为 ReferenceLatent 导致尾帧与首帧姿势 99% 重合
-                    wf2 = buildFlux3KeyframeWorkflow(
-                        lockedLastPrompt,
+                    # 尾帧基于首帧做高保真动作演进编辑（首帧作 <Picture 1>，角色定妆图作后续参考），确保场景/光影/脸部 100% 连续
+                    firstUploadedForEdit = uploadImageToComfy(firstPathLocal, epUrl) if (firstPathLocal and firstPathLocal.exists()) else None
+                    lastEditPrompt = (
+                        f"Keep the exact same scene, background architecture, lighting, costume and character face from <Picture 1>, "
+                        f"only evolve the character's pose and facial expression to the final dramatic beat: {lockedLastPrompt}"
+                        if firstUploadedForEdit
+                        else lockedLastPrompt
+                    )
+                    wf2 = buildKeyframeWorkflow(
+                        lastEditPrompt,
                         width=width,
                         height=height,
                         seed=sharedSeed + 10007,
+                        sourceImageUploadedName=firstUploadedForEdit,
                         referenceUploadedNames=charRefUploads,
+                        sourceFidelity=0.72,
                     )
                     _, lastUrl, _ = _submitAndPollComfyWorkflow(wf2, epUrl, expectedType="image")
-                modeNote = "无影云端 Flux3-Klein 渲染完成（已挂载定妆图与首尾帧同源潜空间锁）"
+                modeNote = "无影云端 H3-33B 电影级关键帧渲染完成（已启用首尾帧同源参考编辑）"
 
                 with closing(getDbConnection()) as conn:
                     newStatus = "keyframes_ready" if (firstUrl or lastUrl) else shotRow["status"]
@@ -841,8 +1317,12 @@ def enqueueShotVideoTask(shotId, engineOverride=None):
                     shotRow = dict(conn.execute("SELECT * FROM shots WHERE id=?", (shotId,)).fetchone())
                     projRow = dict(conn.execute("SELECT * FROM projects WHERE id=?", (shotRow["projectId"],)).fetchone())
 
-                # 1. 同步上一镜（或同角色前序镜头）真实视频尾帧帧锁
+                # 1. 同步上一镜帧锁并自动回填本集已生成镜头的角色固定声纹母本
                 syncEpisodeFrameLocks(shotRow["episodeId"], overwriteExisting=True)
+                try:
+                    backfillEpisodeVoiceBanks(shotRow["episodeId"])
+                except Exception as vbErr:
+                    print(f"[comfyBridge] 声纹回填提示: {vbErr}")
                 with closing(getDbConnection()) as conn:
                     shotRow = dict(conn.execute("SELECT * FROM shots WHERE id=?", (shotId,)).fetchone())
                     projectAssets = [dict(a) for a in conn.execute("SELECT * FROM assets WHERE projectId=?", (shotRow["projectId"],))]
@@ -852,7 +1332,7 @@ def enqueueShotVideoTask(shotId, engineOverride=None):
                 if not comfyStatus["online"]:
                     raise RuntimeError(f"云端 ComfyUI 算力服务未在线 ({comfyStatus.get('endpoint')})，已拒绝生成本地静态推拉假视频")
 
-                # 2. 确保首帧（以及动作推进镜的尾帧）就绪，并强制注入锁定的角色/场景/道具 DNA 与 ReferenceLatent
+                # 2. 确保首帧（以及动作推进镜的尾帧）就绪，并强制注入同场固定机位母板 + 角色/场景 DNA
                 firstUrl = shotRow.get("firstFrameUrl") or ""
                 lastUrl = shotRow.get("lastFrameUrl") or ""
                 # 自动识别并淘汰旧版遗留的带中文标牌乱码关键帧或离线假关键帧
@@ -860,10 +1340,26 @@ def enqueueShotVideoTask(shotId, engineOverride=None):
                     firstUrl = ""
                     lastUrl = ""
                 charRefUploads = _collectShotCharacterRefUploads(shotRow, projectAssets, comfyStatus["endpoint"])
+                voiceRefUpload = _collectShotVoiceRefUpload(shotRow, projectAssets, comfyStatus["endpoint"])
                 sharedKfSeed = random.randint(1, 2147483647)
                 if not firstUrl:
+                    rigMasterPlate = _findSameSceneCameraRigMasterPlate(shotRow, comfyStatus["endpoint"])
                     lockedFirst = compileLockedKeyframePrompt(shotRow, projectAssets, projRow.get("visualStyle", ""), frameRole="first")
-                    wfFirst = buildFlux3KeyframeWorkflow(lockedFirst, width=vWidth, height=vHeight, seed=sharedKfSeed, referenceUploadedNames=charRefUploads)
+                    firstPromptForRender = (
+                        f"Keep the exact same camera angle, room architecture, background props, lighting and character identity from <Picture 1>, "
+                        f"update the character's acting expression and gesture for this shot: {lockedFirst}"
+                        if rigMasterPlate
+                        else lockedFirst
+                    )
+                    wfFirst = buildKeyframeWorkflow(
+                        firstPromptForRender,
+                        width=vWidth,
+                        height=vHeight,
+                        seed=sharedKfSeed,
+                        sourceImageUploadedName=rigMasterPlate,
+                        referenceUploadedNames=charRefUploads,
+                        sourceFidelity=0.78 if rigMasterPlate else 0.65,
+                    )
                     _, firstUrl, _ = _submitAndPollComfyWorkflow(wfFirst, comfyStatus["endpoint"], expectedType="image")
 
                 with closing(getDbConnection()) as conn:
@@ -882,12 +1378,12 @@ def enqueueShotVideoTask(shotId, engineOverride=None):
 
                 engine = engineOverride or shotRow.get("videoEngine") or "h3_fl2va"
                 enableUpscale = str(projRow.get("enableUpscale3d", 0)) == "1"
-                steps = max(12, int(getSettingValue("h3SamplingSteps", "12") or 12))
+                steps = max(4, int(getSettingValue("h3SamplingSteps", "16") or 16))
                 frameLength = calculateH3FrameGrid(shotRow.get("durationSec", 5.0))
 
                 upFirst = uploadImageToComfy(firstPath, comfyStatus["endpoint"])
-                # 默认对 action_fl2va 镜头强制启用首尾双锚点驱动，彻底解决单首帧自由游走、肢体融化变形与动作无法闭环的问题
-                useDualAnchor = str(getSettingValue("strictDualFrameAnchor", "1")) != "0"
+                # 默认关闭强制首尾双锚点（单首帧自由演进动作更自然流畅；仅在显式开启 strictDualFrameAnchor=1 时锁尾帧）
+                useDualAnchor = str(getSettingValue("strictDualFrameAnchor", "0")) == "1"
                 upLast = (
                     uploadImageToComfy(lastPath, comfyStatus["endpoint"])
                     if (useDualAnchor and lastPath and lastPath.exists() and shotRow.get("shotCategory") == "action_fl2va")
@@ -910,6 +1406,30 @@ def enqueueShotVideoTask(shotId, engineOverride=None):
                         height=720 if vWidth >= vHeight else 1280,
                         numFrames=81,
                         steps=20,
+                    )
+                elif engine == "h3_ref2va" or (engine == "h3_fl2va" and not upLast and voiceRefUpload):
+                    compiledPrompt = compileFl2vaVideoPrompt(shotRow, hasLastFrame=False)
+                    wfVideo = buildH3Ref2vaWorkflow(
+                        compiledPrompt,
+                        upFirst,
+                        referenceUploadedNames=charRefUploads,
+                        refAudioUploadedName=voiceRefUpload,
+                        width=vWidth,
+                        height=vHeight,
+                        length=frameLength,
+                        steps=steps,
+                        enableUpscale3d=enableUpscale,
+                    )
+                elif engine == "fasth3":
+                    compiledPrompt = compileFl2vaVideoPrompt(shotRow, hasLastFrame=False)
+                    wfVideo = buildFastH3Workflow(
+                        compiledPrompt,
+                        upFirst,
+                        width=vWidth,
+                        height=vHeight,
+                        length=frameLength,
+                        steps=steps,
+                        enableUpscale3d=enableUpscale,
                     )
                 else:
                     compiledPrompt = compileFl2vaVideoPrompt(shotRow, hasLastFrame=bool(upLast))
@@ -943,7 +1463,11 @@ def enqueueShotVideoTask(shotId, engineOverride=None):
                     )
                     conn.commit()
 
-                # 4. 自动从真实生成的视频末尾抽取高清尾帧并触发后续镜头的连续性帧锁更新
+                # 4. 自动提取角色黄金声纹入库锁定（若该角色首次开口），并提取视频末尾帧更新帧锁
+                try:
+                    extractAndLockCharacterVoiceBank(shotId)
+                except Exception as vbErr:
+                    print(f"[comfyBridge] 提取角色声纹警告 (shotId={shotId}): {vbErr}")
                 try:
                     extractHighResLastFrameFromVideo(shotId)
                 except Exception as exErr:

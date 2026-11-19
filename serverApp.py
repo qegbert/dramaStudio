@@ -271,7 +271,7 @@ class StudioRequestHandler(BaseHTTPRequestHandler):
 
             if path == "/api/settings":
                 with closing(getDbConnection()) as conn:
-                    for key in ("comfyEndpoint", "llmBaseUrl", "llmApiKey", "llmModel", "defaultVideoEngine", "enableUpscale3d", "h3SamplingSteps"):
+                    for key in ("comfyEndpoint", "llmBaseUrl", "llmApiKey", "llmModel", "defaultVideoEngine", "keyframeEngine", "enableUpscale3d", "h3SamplingSteps"):
                         if key in body and body[key] is not None:
                             if key == "llmApiKey" and "****" in str(body[key]):
                                 continue

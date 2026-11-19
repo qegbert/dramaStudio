@@ -971,7 +971,9 @@ function renderShotCards(shots, tasks = [], assets = []) {
               <div class="formGroup">
                 <label>底层视频渲染模型：</label>
                 <select class="formSelect" onchange="saveShotField(${s.id}, {videoEngine: this.value})">
-                  <option value="h3_fl2va" ${s.videoEngine === "h3_fl2va" ? "selected" : ""}>MiniMax-H3 FL2VA（首尾帧音画同步）</option>
+                  <option value="h3_fl2va" ${s.videoEngine === "h3_fl2va" ? "selected" : ""}>MiniMax-H3 FL2VA（首尾帧音画同步 · PDD 8步加速）</option>
+                  <option value="h3_ref2va" ${s.videoEngine === "h3_ref2va" ? "selected" : ""}>MiniMax-H3 Ref2VA（多图参考主体锁 · PDD 8步加速）</option>
+                  <option value="fasth3" ${s.videoEngine === "fasth3" ? "selected" : ""}>FastH3 8步极速（单首帧高速直出）</option>
                   <option value="wan22_moe" ${s.videoEngine === "wan22_moe" ? "selected" : ""}>Wan 2.2 14B MoE（双专家电影级图生视频）</option>
                 </select>
               </div>
@@ -1994,7 +1996,7 @@ async function submitNewEpisode() {
 function openSettingsModal() {
   const s = currentState.settings || {};
   document.getElementById("cfgComfyEndpoint").value = s.comfyEndpoint || "http://127.0.0.1:8188";
-  document.getElementById("cfgH3Steps").value = s.h3SamplingSteps || "20";
+  document.getElementById("cfgH3Steps").value = s.h3SamplingSteps || "16";
   document.getElementById("cfgLlmBaseUrl").value = s.llmBaseUrl || "https://api.deepseek.com/v1";
   document.getElementById("cfgLlmApiKey").value = s.llmApiKeyMasked || "";
   document.getElementById("cfgLlmModel").value = s.llmModel || "deepseek-chat";

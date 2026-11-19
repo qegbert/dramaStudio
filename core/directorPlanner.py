@@ -45,94 +45,73 @@ def _extractCorePoseFromFramePrompt(rawFramePrompt, eraTag=""):
 
 def compileFl2vaVideoPrompt(shotDict, hasLastFrame=True):
     """
-    将单个结构化镜头编译为 MiniMax-H3 ImageToVideo (FL2VA 首尾帧模型) 原生高动态音画提示词。
-    重要铁律：
-    1. 彻底剥离生图阶段冗长的静态背景/服装重复堆砌与 "Pure photographic frame" 静态词，
-       100% 聚焦于镜头推拉运动、0.0s 起始动作、中间大幅度连续物理动作演进与结尾落点姿态；
-    2. 除 <d>[Chinese] ...</d> 真实角色对白外，所有动作与运镜描述 100% 使用纯英文，杜绝模型乱读舞台提示词；
-    3. 每个有声镜头严格聚焦单人紧凑台词口型同步，无台词镜头强制声明零人声与高张力环境拟音。
+    将单个结构化镜头编译为精炼电影级 MiniMax-H3 音画导演指令：
+    - 去除冗余的机械结构标签与重复模板废话，让 Qwen3-VL 32B 100% 聚焦在景别运镜、物理表演、精准口型与环境拟音；
+    - 保留原生 <d>[Chinese] ...</d> 语音同步标记；无台词镜头强制声明纯拟音零人声。
     """
     duration = float(shotDict.get("durationSec") or 5.0)
     framing = extractPureEnglishVisual(shotDict.get("cameraFraming") or "Medium shot") or "Medium shot"
-    movement = extractPureEnglishVisual(shotDict.get("cameraMovement") or "Dynamic push-in camera") or "Dynamic push-in camera"
+    rawMovement = extractPureEnglishVisual(shotDict.get("cameraMovement") or "")
+    # 将僵硬的固定监控机位自动升级为带电影呼吸感的微跟拍运镜
+    if not rawMovement or "steady" in rawMovement.lower() or "static" in rawMovement.lower() or "fixed" in rawMovement.lower():
+        movement = "Subtle handheld cinematic camera with gentle breathing push-in following the actor's movement"
+    else:
+        movement = rawMovement
     firstPose = _extractCorePoseFromFramePrompt(shotDict.get("firstFramePrompt") or "")
     actionArc = extractPureEnglishVisual(shotDict.get("actionArcPrompt") or "")
     lastPose = _extractCorePoseFromFramePrompt(shotDict.get("lastFramePrompt") or "")
-    soundscape = extractPureEnglishVisual(shotDict.get("soundscapePrompt") or "") or "Realistic dramatic environment and physical movement Foley."
+    soundscape = extractPureEnglishVisual(shotDict.get("soundscapePrompt") or "") or "Realistic cinematic environment and physical Foley."
 
     try:
         dialogues = json.loads(shotDict.get("dialogueJson") or "[]")
     except Exception:
         dialogues = []
 
-    if hasLastFrame and shotDict.get("shotCategory") == "action_fl2va":
-        anchorHeader = (
-            "Dynamic high-motion cinematic video (FL2VA): "
-            f"From 0.0s to {duration:g}s, drive a clear, decisive, full-amplitude physical action from the opening keyframe pose to the final keyframe pose with visible body mechanics and camera momentum."
-        )
-    else:
-        anchorHeader = (
-            "Dynamic dramatic performance video (I2V): "
-            f"Over {duration:g} seconds, perform expressive physical movement, intense gaze shifts, natural breathing, and accurate lip-sync from the opening frame."
-        )
-
-    isLockedFromPrev = int(shotDict.get("lockFromPrevEnd") or 0) == 1
-    if isLockedFromPrev:
-        firstPoseLine = (
-            f"[0.0s Start Action] Seamlessly continuing from the exact physical posture and position established in the opening keyframe without any sudden pop or morphing. Opening context: {firstPose}"
-        )
-    else:
-        firstPoseLine = f"[0.0s Start Action] {firstPose}"
-
-    timelineLines = [
-        f"[Camera & Blocking] {framing}, {movement}, cinematic dramatic lighting, pronounced physical motion.",
-        firstPoseLine,
-        f"[0.0s -> {duration:g}s Continuous Physical Action] {actionArc}",
+    visualParts = [
+        f"Live-action Chinese historical drama performance, {framing}, {movement}, natural cinematic lighting, film grain, single continuous uncut take ({duration:g}s)."
     ]
-    if lastPose:
-        timelineLines.append(f"[{duration:g}s Final Payoff Pose] {lastPose}")
+    if actionArc:
+        visualParts.append(f"Fluid continuous physical acting: {actionArc}.")
+    elif firstPose:
+        visualParts.append(f"Scene action: {firstPose}.")
+    if hasLastFrame and lastPose:
+        visualParts.append(f"Transitions smoothly into: {lastPose}.")
+    visualParts.append(
+        "Natural organic human motion with realistic weight shift, relaxed shoulder and head movement, natural blinking, expressive micro-expressions, and realistic cloth sleeve physics."
+    )
 
-    speakerMap = {}
+    audioParts = []
     validDialogueCount = 0
     for line in dialogues[:1]:
         if not isinstance(line, dict) or not str(line.get("text") or "").strip():
             continue
         validDialogueCount += 1
-        speaker = str(line.get("speaker") or "Protagonist").strip()
         speakerLabel = extractPureEnglishVisual(line.get("speaker_label") or "") or "The character in frame"
-        sid = speakerMap.setdefault(speaker, len(speakerMap) + 1)
         kind = str(line.get("kind") or "onscreen").strip()
         lang = str(line.get("language") or "Chinese").strip()
-        delivery = extractPureEnglishVisual(line.get("delivery") or "") or "Intense dramatic voice"
+        delivery = extractPureEnglishVisual(line.get("delivery") or "") or "clear dramatic voice"
         text = str(line.get("text") or "").strip()
 
         if kind == "internal":
-            timelineLines.append(
-                f"Audio (Internal Monologue): Off-screen voiceover of {speakerLabel} (S{sid}), {delivery}: "
-                f"<d>[{lang}] {text}</d> The character on screen keeps lips closed with intense micro-expressions."
+            audioParts.append(
+                f"Off-screen inner monologue by {speakerLabel} ({delivery}): <d>[{lang}] {text}</d> Character keeps lips closed with tense micro-expressions."
             )
         elif kind == "offscreen":
-            timelineLines.append(
-                f"Audio (Off-screen Voice): {speakerLabel} (S{sid}) shouts from off-screen, {delivery}: "
-                f"<d>[{lang}] {text}</d> The visible character reacts physically without mouthing the words."
+            audioParts.append(
+                f"Off-screen voice of {speakerLabel} ({delivery}): <d>[{lang}] {text}</d> Visible character reacts naturally without speaking."
             )
         else:
-            timelineLines.append(
-                f"Audio (On-screen Lip-Sync): {speakerLabel} (S{sid}) speaks clearly on camera, {delivery}: "
-                f"<d>[{lang}] {text}</d> Clear, expressive mouth movement and emotional facial muscles synchronized to speech."
+            audioParts.append(
+                f"{speakerLabel} speaks clearly on screen ({delivery}) with accurate lip-sync and expressive facial performance: <d>[{lang}] {text}</d>"
             )
 
     if validDialogueCount == 0:
-        timelineLines.append(
-            "Audio (Speech): Strictly silent voice track, ZERO human speech, NO voiceover narration, NO talking. Pure dramatic Foley sound effects only."
-        )
+        audioParts.append("No dialogue, no narration, no human speech. Pure atmospheric sound and physical Foley only.")
 
-    timelineLines.append(f"Audio (Soundscape & Foley): {soundscape}")
-    timelineLines.append(
-        "Motion & Visual Constraints: Continuous fluid motion with clear action amplitude, single uncut shot, no text or Chinese characters anywhere."
-    )
+    audioParts.append(f"Soundscape: {soundscape}")
+    visualParts.append("Clean cinematic frame, no on-screen text, no subtitles, no watermarks.")
 
-    return anchorHeader + "\n\n" + "\n".join(timelineLines)
+    return " ".join(visualParts) + "\n" + " ".join(audioParts)
 
 
 def compileWan22VideoPrompt(shotDict):
@@ -623,11 +602,11 @@ def breakScriptIntoKeyframedShots(scriptText, projectAssets, visualStyle, llmCon
                     spk = str(dItem.get("speaker") or "").lstrip("@").strip()
                     subBeat["title"] = f"{rawBeat.get('title', '交锋')}·{spk.split('（')[0] or f'正反打{dIdx+1}'}"
                     subBeat["dialogue"] = [dItem]
-                    subBeat["durationSec"] = max(4.0, min(6.0, round(len(str(dItem.get("text") or "")) / 3.2 + 1.8, 1)))
+                    subBeat["durationSec"] = max(2.8, min(4.5, round(len(str(dItem.get("text") or "")) / 4.0 + 1.4, 1)))
                     if spk:
                         subBeat["charactersInShot"] = [spk]
                     subBeat["framing"] = "Medium close-up shot" if dIdx % 2 == 0 else "Close-up shot"
-                    subBeat["movement"] = "Dynamic push-in"
+                    subBeat["movement"] = "Subtle handheld cinematic push-in"
                     if dIdx > 0:
                         subBeat["startPoseCn"] = f"镜头切至{spk}正反打近景，目光锐利直视对方，开口反击"
                         subBeat["actionCn"] = f"{spk}情绪饱满说出核心台词，面部肌肉与手势沉稳有力"
