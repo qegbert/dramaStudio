@@ -44,6 +44,11 @@ from core.comfyBridge import (
     enqueueShotVideoTask,
     enqueueAssetImageTask,
 )
+from core.ttsBridge import (
+    checkTtsStatus,
+    synthesizeShotDialogueAudio,
+    synthesizeEpisodeDialogues,
+)
 
 WEB_DIR = BASE_DIR / "web"
 SERVER_PORT = int(os.environ.get("DRAMA_STUDIO_PORT", "8688"))
@@ -140,12 +145,17 @@ class StudioRequestHandler(BaseHTTPRequestHandler):
                     projCount = conn.execute("SELECT count(*) FROM projects").fetchone()[0]
                     shotCount = conn.execute("SELECT count(*) FROM shots").fetchone()[0]
                 comfy = checkComfyStatus()
+                tts = checkTtsStatus()
                 return self.sendJson({
                     "ok": True,
                     "comfy": comfy,
+                    "tts": tts,
                     "settings": maskedSettings,
                     "stats": {"projects": projCount, "shots": shotCount},
                 })
+
+            if path == "/api/tts/status":
+                return self.sendJson({"ok": True, "tts": checkTtsStatus()})
 
             if path == "/api/projects":
                 with closing(getDbConnection()) as conn:
@@ -271,13 +281,27 @@ class StudioRequestHandler(BaseHTTPRequestHandler):
 
             if path == "/api/settings":
                 with closing(getDbConnection()) as conn:
-                    for key in ("comfyEndpoint", "llmBaseUrl", "llmApiKey", "llmModel", "defaultVideoEngine", "keyframeEngine", "enableUpscale3d", "h3SamplingSteps"):
+                    for key in ("comfyEndpoint", "llmBaseUrl", "llmApiKey", "llmModel", "defaultVideoEngine", "keyframeEngine", "enableUpscale3d", "h3SamplingSteps", "ttsEndpoint", "enableAudioDrivenLipSync"):
                         if key in body and body[key] is not None:
                             if key == "llmApiKey" and "****" in str(body[key]):
                                 continue
                             conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, str(body[key])))
                     conn.commit()
-                return self.sendJson({"ok": True, "comfy": checkComfyStatus()})
+                return self.sendJson({"ok": True, "comfy": checkComfyStatus(), "tts": checkTtsStatus()})
+
+            mSynEp = re.match(r"^/api/episodes/(\d+)/synthesizeAudio$", path)
+            if mSynEp:
+                episodeId = int(mSynEp.group(1))
+                forceRegen = bool(body.get("forceRegenerate"))
+                result = synthesizeEpisodeDialogues(episodeId, forceRegenerate=forceRegen)
+                return self.sendJson({"ok": True, **result})
+
+            mSynShot = re.match(r"^/api/shots/(\d+)/synthesizeAudio$", path)
+            if mSynShot:
+                shotId = int(mSynShot.group(1))
+                forceRegen = bool(body.get("forceRegenerate"))
+                result = synthesizeShotDialogueAudio(shotId, forceRegenerate=forceRegen)
+                return self.sendJson({"ok": True, **result})
 
             if path == "/api/import/huobao":
                 summary = importFromHuobaoDatabase(body.get("sourceDbPath"))

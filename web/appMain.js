@@ -239,6 +239,7 @@ async function loadWorkspace(projectId, episodeId = null) {
   renderFilmstripRibbon(ws.shots || []);
   renderShotCards(ws.shots || [], ws.tasks || [], ws.assets || []);
   renderTaskList(ws.tasks || [], ws.shots || []);
+  refreshActiveInlineStage();
   if (document.getElementById("assetBibleModal") && document.getElementById("assetBibleModal").open) {
     renderAssetBibleModal();
   }
@@ -498,12 +499,16 @@ function renderAssetList(assets) {
       const eraBadge = a.eraTag
         ? `<span class="eraBadge">${escapeHtml(a.eraTag)}</span>`
         : "";
+      const voiceBadge =
+        a.assetType === "character" && a.voiceRefUrl
+          ? `<span class="eraBadge" style="background:rgba(16,185,129,0.2);color:var(--emerald-ok);" title="已提取锁定该角色专属声纹母本，后续全集同角色开口自动锁声">🎙️已锁声</span>`
+          : "";
       return `
         <div class="assetItem">
           ${thumbHtml}
           <div style="min-width:0;">
             <div style="display:flex; justify-content:space-between; align-items:center; gap:4px;">
-              <div class="assetName">@${escapeHtml(a.name)} ${eraBadge}</div>
+              <div class="assetName">@${escapeHtml(a.name)} ${eraBadge} ${voiceBadge}</div>
               <div style="display:flex; gap:3px; flex-shrink:0;">
                 <button class="btn btnSmall btnCyan" style="padding:1px 6px; font-size:10px;" ${isRunning ? "disabled" : ""} onclick="triggerAssetImage(${a.id})" title="${a.imageUrl ? "重新生成此定妆设定图" : "生成定妆设定图"}">
                   ${isRunning ? "⏳" : a.imageUrl ? "🔄重画" : "🎨出图"}
@@ -830,17 +835,23 @@ function renderShotCards(shots, tasks = [], assets = []) {
         ? boundNames
             .map((nm) => {
               const aObj = assetByName[nm];
-              const thumb = aObj && aObj.imageUrl ? `<img src="${escapeHtml(aObj.imageUrl)}" alt="${escapeHtml(nm)}" />` : "🔒";
+              const typeIcon = !aObj ? "🔒" : aObj.assetType === "character" ? "🎭" : aObj.assetType === "scene" ? "🏛️" : "📦";
+              const thumb = aObj && aObj.imageUrl ? `<img src="${escapeHtml(aObj.imageUrl)}" alt="${escapeHtml(nm)}" />` : typeIcon;
+              const voiceTag = aObj && aObj.voiceRefUrl ? " 🎙️" : "";
               const aId = aObj ? aObj.id : null;
-              return `<span class="boundAssetPill" onclick="${aId ? `openAssetBibleModal(${aId})` : "openAssetBibleModal()"}" title="点击查看或微调 @${escapeHtml(nm)} 的锁定外貌设定">${thumb} @${escapeHtml(nm)}</span>`;
+              return `<span class="boundAssetPill" onclick="${aId ? `openAssetBibleModal(${aId})` : "openAssetBibleModal()"}" title="即梦全能参考已挂载 @${escapeHtml(nm)}（点击可查看/调整设定）">${thumb} ${typeIcon}@${escapeHtml(nm)}${voiceTag}</span>`;
             })
             .join("")
         : `<span style="color:var(--text-muted);">未绑定特定资产</span>`;
 
+      const qc = s.qcReport || {};
+      const qcBadge = s.videoUrl && qc.grade
+        ? `<span class="eraBadge" style="background:rgba(245,158,11,0.18);color:var(--amber-gold);" title="分辨率: ${qc.width || 0}x${qc.height || 0} | 响度: ${qc.meanVolumeDb ?? '-'}dB">QC:${escapeHtml(qc.grade)} · ${qc.width || 2016}P</span>`
+        : "";
       const statusBadge = s.videoUrl
-        ? `<span class="eraBadge" style="background:rgba(16,185,129,0.2);color:var(--emerald-ok);">✅ 视频已生成 (${s.durationSec}s)</span>`
+        ? `<span class="eraBadge" style="background:rgba(16,185,129,0.2);color:var(--emerald-ok);">✅ 视频已生成 (${s.durationSec}s)</span> ${qcBadge}`
         : s.firstFrameUrl
-        ? `<span class="eraBadge" style="background:rgba(6,182,212,0.18);color:var(--cyan-monitor);">🖼️ 画面已就绪，可生成视频</span>`
+        ? `<span class="eraBadge" style="background:rgba(6,182,212,0.18);color:var(--cyan-monitor);">🖼️ 5帧择优画面已就绪</span>`
         : `<span style="font-size:11.5px;color:var(--text-muted);">待生成画面</span>`;
 
       return `
@@ -912,7 +923,7 @@ function renderShotCards(shots, tasks = [], assets = []) {
                 <span style="font-family:var(--font-mono); font-size:11px; color:var(--amber-gold);">${s.durationSec}秒 · ${escapeHtml(s.cameraFraming)}</span>
               </div>
               <div class="shotBoundAssetsRow">
-                <strong style="color:var(--cyan-monitor);">🔒 已绑定角色/场景设定：</strong>
+                <strong style="color:var(--cyan-monitor);">🎯 即梦全能参考槽 (人+景+物+声)：</strong>
                 ${boundPillsHtml}
               </div>
               <div class="intentBanner">🎯 <strong>剧情看点：</strong>${escapeHtml(s.intentText || s.title || "推进本场核心剧情")}</div>
@@ -2317,6 +2328,282 @@ async function startAutoPilot(draftOverride = {}) {
   if (currentState.autoPilotRunning) {
     stopAutoPilot("");
   }
+}
+
+/* ============================================================================
+ * 语雀 × 即梦 4 大沉浸式主工作台切换与多轨精剪合轴台 (Inline Stages & NLE Timeline)
+ * ============================================================================ */
+function switchStudioStage(stageKey) {
+  currentState.activeStageTab = stageKey || "storyboard";
+  const tabMap = {
+    bible: "tabStageBible",
+    assets: "tabStageAssets",
+    storyboard: "tabStageStoryboard",
+    timeline: "tabStageTimeline",
+  };
+  Object.entries(tabMap).forEach(([k, id]) => {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle("active", k === currentState.activeStageTab);
+  });
+
+  const bibleEl = document.getElementById("inlineBibleWorkspace");
+  const assetEl = document.getElementById("inlineAssetWorkspace");
+  const sbEl = document.getElementById("storyboardStageContainer");
+  const tlEl = document.getElementById("nleTimelineWorkspace");
+  const layoutToggle = document.getElementById("storyboardLayoutToggle");
+
+  if (bibleEl) bibleEl.style.display = currentState.activeStageTab === "bible" ? "flex" : "none";
+  if (assetEl) assetEl.style.display = currentState.activeStageTab === "assets" ? "flex" : "none";
+  if (sbEl) sbEl.style.display = currentState.activeStageTab === "storyboard" ? "flex" : "none";
+  if (tlEl) tlEl.style.display = currentState.activeStageTab === "timeline" ? "flex" : "none";
+  if (layoutToggle) layoutToggle.style.display = currentState.activeStageTab === "storyboard" ? "inline-flex" : "none";
+
+  refreshActiveInlineStage();
+}
+
+function setStoryboardLayout(mode) {
+  currentState.storyboardLayout = mode === "compact" ? "compact" : "detail";
+  const container = document.getElementById("shotListContainer");
+  if (container) {
+    container.classList.toggle("compactGridMode", currentState.storyboardLayout === "compact");
+  }
+  const bDetail = document.getElementById("btnLayoutDetail");
+  const bCompact = document.getElementById("btnLayoutCompact");
+  if (bDetail) bDetail.classList.toggle("active", currentState.storyboardLayout === "detail");
+  if (bCompact) bCompact.classList.toggle("active", currentState.storyboardLayout === "compact");
+}
+
+function refreshActiveInlineStage() {
+  const stage = currentState.activeStageTab || "storyboard";
+  if (stage === "bible") {
+    renderInlineBibleWorkspace();
+  } else if (stage === "assets") {
+    renderInlineAssetWorkspace();
+  } else if (stage === "timeline") {
+    renderNleTimelineWorkspace();
+  }
+}
+
+function renderInlineBibleWorkspace() {
+  const container = document.getElementById("inlineBibleWorkspace");
+  if (!container) return;
+  const ws = currentState.workspace || {};
+  const proj = ws.project || {};
+  const ep = ws.activeEpisode || {};
+  const ledger = Array.isArray(ep.sceneLedger) ? ep.sceneLedger : [];
+  const assets = ws.assets || [];
+
+  const ledgerCardsHtml = ledger.length
+    ? ledger
+        .map(
+          (sc) => `
+          <div style="background:var(--bg-void); border:1px solid var(--border-subtle); border-radius:8px; padding:10px 12px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+              <strong style="color:var(--cyan-monitor);">[${escapeHtml(sc.sceneCode || "S01")}] ${escapeHtml(sc.sceneTitle || sc.locationName || "主场景")}</strong>
+              <span class="eraBadge">${escapeHtml(sc.locationName || "核心场次")}</span>
+            </div>
+            <div style="font-size:12px; color:var(--text-secondary);">🧭 <strong>180° 空间站位轴线：</strong>${escapeHtml(sc.spatialAxis || "按正反打轴线调度")}</div>
+            <div style="font-size:11.5px; color:var(--amber-gold); margin-top:4px;">👥 出场角色：${escapeHtml((sc.allowedCharacters || []).join("、") || "主角")}</div>
+          </div>
+        `
+        )
+        .join("")
+    : `<div style="color:var(--text-muted); font-size:12px;">尚未生成分场空间调度账本，请点击右上角「✨ 打开剧本改写工作台」一键提炼。</div>`;
+
+  container.innerHTML = `
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+      <div>
+        <div style="font-size:15px; font-weight:700; color:var(--cyan-monitor);">📖 语雀式《短剧项目圣经 (Project Bible)》& 分场空间账本</div>
+        <div style="font-size:12px; color:var(--text-secondary);">统一管理全剧视觉母基调、分集剧本、180° 空间轴线与角色/场景资产索引，严防文影不同步。</div>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button class="btn btnSmall btnCyan" onclick="openScriptModal()">📜 打开双栏剧本改写编辑器</button>
+        <button class="btn btnSmall btnPrimary" onclick="switchStudioStage('assets')">下一步：进入即梦三要素资产工坊 ➔</button>
+      </div>
+    </div>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+      <div style="background:var(--bg-card); border:1px solid var(--border-subtle); border-radius:10px; padding:12px;">
+        <div style="font-size:12.5px; font-weight:700; color:var(--amber-gold); margin-bottom:6px;">🎬 核心立项设定表</div>
+        <div style="font-size:12px; line-height:1.7; color:var(--text-primary);">
+          <div><strong>剧名：</strong>${escapeHtml(proj.title || "-")}（${escapeHtml(proj.genre || "古装权谋")} · ${escapeHtml(proj.aspectRatio || "16:9")}）</div>
+          <div><strong>全剧视觉母基调：</strong><span style="color:var(--text-secondary);">${escapeHtml(proj.visualStyle || "-")}</span></div>
+          <div><strong>已入库标准资产：</strong>角色 ${assets.filter((a) => a.assetType === "character").length} 人 · 场景 ${assets.filter((a) => a.assetType === "scene").length} 处 · 道具 ${assets.filter((a) => a.assetType === "prop").length} 件</div>
+        </div>
+      </div>
+      <div style="background:var(--bg-card); border:1px solid var(--border-subtle); border-radius:10px; padding:12px; display:flex; flex-direction:column; gap:8px; max-height:220px; overflow-y:auto;">
+        <div style="font-size:12.5px; font-weight:700; color:var(--cyan-monitor);">🧭 本集分场空间调度账本 (${ledger.length} 场)</div>
+        ${ledgerCardsHtml}
+      </div>
+    </div>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+      <div style="background:var(--bg-void); border:1px solid var(--border-subtle); border-radius:8px; padding:12px;">
+        <div style="font-size:12px; font-weight:700; color:var(--text-secondary); margin-bottom:6px;">📖 本集小说原文 (${(ep.novelContent || "").length} 字)</div>
+        <div style="font-size:12px; color:var(--text-secondary); white-space:pre-wrap; max-height:260px; overflow-y:auto;">${escapeHtml(ep.novelContent || "暂无原文，请点击右上角打开剧本改写编辑器粘贴小说。")}</div>
+      </div>
+      <div style="background:var(--bg-void); border:1px solid var(--border-subtle); border-radius:8px; padding:12px;">
+        <div style="font-size:12px; font-weight:700; color:var(--emerald-ok); margin-bottom:6px;">🤖 AI 标准化分场影视剧本 (${(ep.scriptContent || "").length} 字)</div>
+        <div style="font-size:12px; font-family:var(--font-mono); color:var(--text-primary); white-space:pre-wrap; max-height:260px; overflow-y:auto;">${escapeHtml(ep.scriptContent || "尚未改写分场剧本")}</div>
+      </div>
+    </div>
+  `;
+}
+
+function renderInlineAssetWorkspace() {
+  const container = document.getElementById("inlineAssetWorkspace");
+  if (!container) return;
+  const ws = currentState.workspace || {};
+  const assets = ws.assets || [];
+  const runningMap = getRunningAssetTaskMap();
+
+  const cardsHtml = assets
+    .map((a) => {
+      const isRunning = Boolean(runningMap[a.id]);
+      const imgUrl = withCacheBust(a.imageUrl, a.updatedAt);
+      const typeBadge =
+        a.assetType === "character"
+          ? "🎭 角色正脸闭嘴基准"
+          : a.assetType === "scene"
+          ? "🏛️ 场景空间母板"
+          : "📦 核心交互道具";
+      const voiceBadge =
+        a.assetType === "character"
+          ? a.voiceRefUrl
+            ? `<span class="eraBadge" style="background:rgba(16,185,129,0.2);color:var(--emerald-ok);">🎙️ 专属声纹已锁定</span>`
+            : `<span class="eraBadge" style="background:rgba(148,163,184,0.15);color:var(--text-muted);">🎙️ 首镜出声后自动锁声</span>`
+          : "";
+      return `
+        <div style="background:var(--bg-card); border:1px solid var(--border-subtle); border-radius:10px; padding:12px; display:flex; gap:12px; align-items:flex-start;">
+          <div style="width:96px; height:96px; border-radius:8px; overflow:hidden; background:var(--bg-void); flex-shrink:0; border:1px solid var(--border-subtle); display:flex; align-items:center; justify-content:center;">
+            ${
+              a.imageUrl
+                ? `<img src="${escapeHtml(imgUrl)}" alt="${escapeHtml(a.name)}" style="width:100%;height:100%;object-fit:cover;cursor:zoom-in;" onclick="openLightbox('${escapeHtml(imgUrl)}', '@${escapeHtml(a.name)} · 即梦基准设定图', {type:'asset', id:${a.id}})" />`
+                : `<span style="font-size:11px; color:var(--amber-gold); text-align:center;">待生成<br/>基准图</span>`
+            }
+          </div>
+          <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:5px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; flex-wrap:wrap;">
+              <strong style="font-size:13.5px; color:var(--text-primary);">@${escapeHtml(a.name)}</strong>
+              <div style="display:flex; gap:4px;">
+                <button class="btn btnSmall btnCyan" ${isRunning ? "disabled" : ""} onclick="triggerAssetImage(${a.id})">${isRunning ? "⏳生成中" : a.imageUrl ? "🔄重画" : "🎨生成基准图"}</button>
+                <button class="btn btnSmall" onclick="openAssetBibleModal(${a.id})">✏️微调</button>
+              </div>
+            </div>
+            <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+              <span style="font-size:11px; color:var(--amber-gold);">${typeBadge}</span>
+              ${voiceBadge}
+            </div>
+            <div style="font-size:11.5px; color:var(--text-secondary); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">${escapeHtml(a.visualPrompt || "暂无描述")}</div>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+
+  container.innerHTML = `
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+      <div>
+        <div style="font-size:15px; font-weight:700; color:var(--amber-gold);">🎭 即梦级三要素资产工坊 (角色闭嘴基准照 · 场景空间母板 · 道具与声纹固化)</div>
+        <div style="font-size:12px; color:var(--text-secondary);">所有角色基准图均采用“正脸自然闭嘴基准”，并在生成分镜时与场景母板、道具图一并挂入全能参考槽。</div>
+      </div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button class="btn btnSmall btnCyan" onclick="batchGenerateAllAssetImages(true)">🎨 一键补齐缺失基准图</button>
+        <button class="btn btnSmall" onclick="openAssetBibleModal()">🛠️ 打开完整资产管理台</button>
+        <button class="btn btnSmall btnPrimary" onclick="switchStudioStage('storyboard')">下一步：进入即梦故事板画布 ➔</button>
+      </div>
+    </div>
+    <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(340px, 1fr)); gap:12px;">
+      ${cardsHtml || `<div style="color:var(--text-muted);">暂无设定资产，请先在第 ① 步从剧本提取。</div>`}
+    </div>
+  `;
+}
+
+function seekMasterVideoTo(sec) {
+  const player = document.getElementById("masterVideoPlayer");
+  if (player) {
+    player.currentTime = Number(sec || 0);
+    player.play().catch(() => {});
+    player.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+}
+
+function renderNleTimelineWorkspace() {
+  const container = document.getElementById("nleTimelineWorkspace");
+  if (!container) return;
+  const ws = currentState.workspace || {};
+  const shots = ws.shots || [];
+  const ep = ws.activeEpisode || {};
+
+  let cursor = 0;
+  const vClips = [];
+  const aClips = [];
+  const sClips = [];
+
+  shots.forEach((s) => {
+    const dlgs = Array.isArray(s.dialogue) ? s.dialogue : [];
+    const hasDlg = Boolean(dlgs.length && dlgs[0].text);
+    const estTrimmed = hasDlg ? 3.1 : 2.3;
+    const startSec = cursor;
+    cursor = Number((cursor + estTrimmed).toFixed(2));
+    const widthFlex = Math.max(1, Number(estTrimmed.toFixed(1)));
+
+    vClips.push(`
+      <div class="nleClipBlock videoTrackClip" style="flex:${widthFlex};" onclick="seekMasterVideoTo(${startSec})" title="点击跳转到成片 ${startSec.toFixed(1)}s 处播放">
+        <div style="font-weight:700;">#${s.shotNumber} ${escapeHtml((s.title || "").replace(/^\[S\d+\]\s*/, ""))}</div>
+        <div style="font-size:10px; color:var(--cyan-monitor);">✂️ 智能精剪 ~${estTrimmed}s ${s.videoUrl ? "✅2K" : "⏳待渲染"}</div>
+      </div>
+    `);
+
+    const spk = hasDlg ? dlgs[0].speaker || "角色" : "纯环境拟音";
+    aClips.push(`
+      <div class="nleClipBlock voiceTrackClip" style="flex:${widthFlex};" onclick="seekMasterVideoTo(${startSec})">
+        <div style="font-weight:700;">🎙️ ${escapeHtml(spk)}</div>
+        <div style="font-size:10px;">${hasDlg ? "🔒固定声纹 + J/L-Cut 淡化" : "🔊 动作拟音 Foley"}</div>
+      </div>
+    `);
+
+    const subText = hasDlg ? dlgs[0].text : "（无台词表演）";
+    sClips.push(`
+      <div class="nleClipBlock subTrackClip" style="flex:${widthFlex};" onclick="seekMasterVideoTo(${startSec})">
+        <div style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">💬 ${escapeHtml(subText)}</div>
+        <div style="font-size:10px;">${startSec.toFixed(1)}s - ${cursor.toFixed(1)}s</div>
+      </div>
+    `);
+  });
+
+  container.innerHTML = `
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+      <div>
+        <div style="font-size:15px; font-weight:700; color:var(--emerald-ok);">🎞️ 剪映级多轨精剪合轴台 (Multi-Track NLE Master Assembler)</div>
+        <div style="font-size:12px; color:var(--text-secondary);">自动掐头去尾消除 5.17s 机械等长发呆 · 全集《长安十二时辰》统一电影调色 · 角色声纹锁声与贯穿全集不断流古风配乐混音。</div>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button class="btn btnSmall" onclick="switchStudioStage('storyboard')">⬅ 返回故事板分镜画布</button>
+        <button class="btn btnSmall btnEmerald" onclick="mergeMasterEpisode()">🎞️ 立即重新执行多轨精剪合轴</button>
+      </div>
+    </div>
+
+    <div class="nleTrackRow">
+      <div class="nleTrackLabel">🎬 V1 画面快切轨</div>
+      <div class="nleTrackClips">${vClips.join("") || "暂无分镜"}</div>
+    </div>
+    <div class="nleTrackRow">
+      <div class="nleTrackLabel">🎙️ A1 锁声对白轨</div>
+      <div class="nleTrackClips">${aClips.join("") || "暂无对白"}</div>
+    </div>
+    <div class="nleTrackRow">
+      <div class="nleTrackLabel">💬 S1 影视字幕轨</div>
+      <div class="nleTrackClips">${sClips.join("") || "暂无字幕"}</div>
+    </div>
+    <div class="nleTrackRow">
+      <div class="nleTrackLabel">🎵 A2 贯穿BGM轨</div>
+      <div class="nleContinuousBar">
+        <span>🎻 贯穿全集不断流古风权谋氛围底乐 (bgm_ambient.wav · 低频柔化衬底 · -15 LUFS EBU R128 响度统一)</span>
+        <span>0.0s ➔ ~${cursor.toFixed(1)}s 连续流淌无断层</span>
+      </div>
+    </div>
+  `;
 }
 
 window.addEventListener("DOMContentLoaded", initApp);

@@ -21,10 +21,11 @@ MEDIA_DIR = DATA_DIR / "media"
 KEYFRAMES_DIR = MEDIA_DIR / "keyframes"
 VIDEOS_DIR = MEDIA_DIR / "videos"
 ASSETS_DIR = MEDIA_DIR / "assets"
+AUDIO_DIR = MEDIA_DIR / "audio"
 EXPORTS_DIR = MEDIA_DIR / "exports"
 DB_PATH = DATA_DIR / "studioStore.sqlite3"
 
-for folder in (DATA_DIR, MEDIA_DIR, KEYFRAMES_DIR, VIDEOS_DIR, ASSETS_DIR, EXPORTS_DIR):
+for folder in (DATA_DIR, MEDIA_DIR, KEYFRAMES_DIR, VIDEOS_DIR, ASSETS_DIR, AUDIO_DIR, EXPORTS_DIR):
     folder.mkdir(parents=True, exist_ok=True)
 
 
@@ -152,11 +153,19 @@ def initDatabase():
             "enableUpscale3d": "1",
             "h3SamplingSteps": "16",
             "strictDualFrameAnchor": "0",
+            "ttsEndpoint": os.environ.get("WUYING_TTS_ENDPOINT", "http://100.70.124.92:8895"),
+            "enableAudioDrivenLipSync": "1",
         }
         # 平滑迁移旧库 assets 表，补充角色固定声纹参考音频字段 voiceRefUrl
         assetCols = {r[1] for r in conn.execute("PRAGMA table_info(assets)").fetchall()}
         if "voiceRefUrl" not in assetCols:
             conn.execute("ALTER TABLE assets ADD COLUMN voiceRefUrl TEXT DEFAULT ''")
+        # 平滑迁移旧库 shots 表，补充配音先行音频路径与精确时长字段
+        shotCols = {r[1] for r in conn.execute("PRAGMA table_info(shots)").fetchall()}
+        if "ttsAudioUrl" not in shotCols:
+            conn.execute("ALTER TABLE shots ADD COLUMN ttsAudioUrl TEXT DEFAULT ''")
+        if "ttsDurationSec" not in shotCols:
+            conn.execute("ALTER TABLE shots ADD COLUMN ttsDurationSec REAL DEFAULT 0")
         for k, v in defaults.items():
             conn.execute(
                 "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",

@@ -59,7 +59,7 @@ def getSettingValue(key, defaultVal=""):
 
 
 def checkComfyStatus():
-    """探测无影云端 ComfyUI 服务是否在线并返回系统状态"""
+    """探测无影云端 ComfyUI 服务是否在线并返回系统状态与显存规格"""
     endpoint = getSettingValue("comfyEndpoint", "http://127.0.0.1:8188").rstrip("/")
     try:
         req = urllib.request.Request(f"{endpoint}/system_stats", method="GET")
@@ -67,14 +67,23 @@ def checkComfyStatus():
             data = json.loads(resp.read().decode("utf-8"))
             devices = data.get("devices") or []
             gpuName = devices[0].get("name", "GPU") if devices else "Cloud GPU"
-            return {"online": True, "endpoint": endpoint, "gpu": gpuName}
+            vramTotal = int(devices[0].get("vram_total", 0)) if devices else 0
+            vramGb = round(vramTotal / 1e9, 1) if vramTotal else 0.0
+            is24GbCard = bool(0 < vramTotal <= 27 * 1e9)
+            return {"online": True, "endpoint": endpoint, "gpu": gpuName, "vramGb": vramGb, "is24GbCard": is24GbCard}
     except Exception as err:
-        return {"online": False, "endpoint": endpoint, "error": str(err)}
+        return {"online": False, "endpoint": endpoint, "error": str(err), "vramGb": 0.0, "is24GbCard": False}
 
 
-def getAspectRatioDimensions(aspectRatio="16:9", isVideo=True):
-    """计算符合 H3 / Flux3 32像素网格约束的标准分辨率"""
+def getAspectRatioDimensions(aspectRatio="16:9", isVideo=True, is24GbCard=False):
+    """计算符合 H3 / Flux3 32像素网格约束的标准分辨率（支持 24GB 显存自适应防爆档）"""
     ratio = str(aspectRatio or "16:9").strip()
+    if is24GbCard:
+        if ratio == "9:16":
+            return (512, 896) if isVideo else (576, 1024)
+        if ratio == "1:1":
+            return 768, 768
+        return (896, 512) if isVideo else (1024, 576)
     if isVideo:
         if ratio == "9:16":
             return 768, 1344
@@ -231,11 +240,12 @@ def buildH3StillKeyframeWorkflow(
     width = max(384, (int(width) // 32) * 32)
     height = max(384, (int(height) // 32) * 32)
 
+    maxRefs = 2 if width <= 1024 else 9
     allRefs = []
     if sourceImageUploadedName:
         allRefs.append(sourceImageUploadedName)
     for r in (referenceUploadedNames or []):
-        if r and r not in allRefs and len(allRefs) < 9:
+        if r and r not in allRefs and len(allRefs) < maxRefs:
             allRefs.append(r)
 
     useRefEdit = len(allRefs) > 0
@@ -312,7 +322,20 @@ def buildH3StillKeyframeWorkflow(
         "class_type": "MiniMaxH3StillDecodeT8",
         "inputs": {"av_latent": ["14", 0], "video_vae": ["3", 0], "frame_selection": "middle", "frame_index": 0},
     }
-    wf["16"] = {"class_type": "SaveImage", "inputs": {"images": ["15", 0], "filename_prefix": f"DS_H3_KF_{int(time.time())}"}}
+    selectorInputs = {
+        "frames": ["15", 1],
+        "strategy": "balanced_edit" if useRefEdit else "best_quality",
+        "manual_index": 0,
+        "skip_first_frames": 0,
+        "candidate_start": 0.0,
+        "candidate_end": 1.0,
+        "similarity_weight": 0.65,
+        "top_k": 4,
+    }
+    if useRefEdit:
+        selectorInputs["source_image"] = ["7_1", 0]
+    wf["15b"] = {"class_type": "H3ImageFrameSelector", "inputs": selectorInputs}
+    wf["16"] = {"class_type": "SaveImage", "inputs": {"images": ["15b", 0], "filename_prefix": f"DS_H3_KF_{int(time.time())}"}}
     return wf
 
 
@@ -434,6 +457,7 @@ def _appendH3SamplerAndDecode(
     enableUpscale3d=False,
     filenamePrefix="DS_H3",
     pddFile=None,
+    overrideAudioRef=None,
 ):
     """为 MiniMax-H3 系列工作流统一挂载 PDD 8 步加速/标准采样器与 3D 潜空间超分解码链路"""
     if not seed or seed < 0:
@@ -511,7 +535,7 @@ def _appendH3SamplerAndDecode(
         "class_type": "VHS_VideoCombine",
         "inputs": {
             "images": imagesOut,
-            "audio": audioOut,
+            "audio": overrideAudioRef if overrideAudioRef is not None else audioOut,
             "frame_rate": 24.0,
             "loop_count": 0,
             "pingpong": False,
@@ -521,6 +545,96 @@ def _appendH3SamplerAndDecode(
         },
     }
     return wf
+
+
+def buildH3AudioDrivenWorkflow(
+    promptText,
+    firstFrameUploadedName,
+    driveAudioUploadedName,
+    lastFrameUploadedName=None,
+    referenceUploadedNames=None,
+    width=1344,
+    height=768,
+    length=124,
+    steps=16,
+    enableUpscale3d=False,
+    seed=None,
+    useRef2vaBase=False,
+):
+    """
+    构建商业短剧生产级 Audio-First 锁声驱动口型工作流（基于 MiniMaxH3AudioConditioningT8）：
+    - 将无影 IndexTTS-2 预先配好的角色台词 WAV 挂入 drive_audio，并将 audio_mode 设为 lock_source；
+    - H3 按外部真实原声精准驱动人物口型、微表情与呼吸节奏，同时将无损 mux_audio 直通最终视频合成；
+    - 同时兼容 FL2VA（24GB/48GB 通用）与 Ref2VA（多图参考高显存模式）。
+    """
+    width = max(384, (int(width) // 32) * 32)
+    height = max(384, (int(height) // 32) * 32)
+    length = max(73, (int(length) // 17) * 17 + 5)
+
+    unetFile = "minimax_h3_ref2va_pruned_int8_convrot.safetensors" if useRef2vaBase else "minimax_h3_fl2va_pruned_int8_convrot.safetensors"
+    pddFile = "minimax_h3_ref2va_pdd_acc_8step_comfyui.safetensors" if useRef2vaBase else "minimax_h3_fl2va_pdd_acc_8step_comfyui.safetensors"
+
+    wf = {
+        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": unetFile, "weight_dtype": "default"}},
+        "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", "type": "minimax", "device": "default"}},
+        "3": {"class_type": "VAELoader", "inputs": {"vae_name": "minimax_h3_video_vae_fp16.safetensors"}},
+        "4": {"class_type": "VAELoader", "inputs": {"vae_name": "minimax_h3_audio_vae_fp32.safetensors"}},
+        "5": {"class_type": "MiniMaxH3MemoryEfficientSageAttentionPatch", "inputs": {"model": ["1", 0]}},
+        "6": {"class_type": "MiniMaxH3SigmaShift", "inputs": {"model": ["5", 0], "shift_video": 12.0, "shift_audio": 3.0}},
+        "7": {"class_type": "LoadImage", "inputs": {"image": firstFrameUploadedName}},
+        "7_drv": {"class_type": "LoadAudio", "inputs": {"audio": driveAudioUploadedName}},
+    }
+
+    # 音频锁声驱动模式下，显式声明 <Audio 1> 作为原声驱动源，同时去除可能冲突的即兴台词要求
+    drivenPrompt = (
+        f"Synchronize the speaker's lip movements, jaw motion, breathing and subtle facial micro-expressions strictly to <Audio 1>. "
+        f"{promptText}"
+    )
+
+    condInputs = {
+        "clip": ["2", 0],
+        "video_vae": ["3", 0],
+        "audio_vae": ["4", 0],
+        "prompt": drivenPrompt,
+        "width": width,
+        "height": height,
+        "length": length,
+        "task_type": "Ref2VA" if useRef2vaBase else "FL2VA",
+        "audio_mode": "lock_source",
+        "audio_denoise_strength": 0.0,
+        "add_source_as_reference": True,
+        "prompt_primary_audio_ordinal": 1,
+        "strict_prompt_tags": False,
+        "ref_image_size": "match",
+        "reference_video_policy": "official_2_to_15s",
+        "drive_audio": ["7_drv", 0],
+        "final_audio": ["7_drv", 0],
+        "first_frame": ["7", 0],
+    }
+
+    if lastFrameUploadedName and not useRef2vaBase:
+        wf["8"] = {"class_type": "LoadImage", "inputs": {"image": lastFrameUploadedName}}
+        condInputs["last_frame"] = ["8", 0]
+
+    if useRef2vaBase and referenceUploadedNames:
+        for idx, refName in enumerate([r for r in referenceUploadedNames if r][:4], start=1):
+            nodeId = f"7_r{idx}"
+            wf[nodeId] = {"class_type": "LoadImage", "inputs": {"image": refName}}
+            condInputs[f"ref_image_{idx}"] = [nodeId, 0]
+
+    wf["9"] = {"class_type": "MiniMaxH3AudioConditioningT8", "inputs": condInputs}
+    return _appendH3SamplerAndDecode(
+        wf,
+        modelRef=["6", 0],
+        conditioningRef=["9", 0],
+        latentRef=["9", 1],
+        steps=steps,
+        seed=seed,
+        enableUpscale3d=enableUpscale3d,
+        filenamePrefix="DS_H3_AUDIO_LOCKED",
+        pddFile=pddFile,
+        overrideAudioRef=["9", 2],
+    )
 
 
 def buildH3Fl2vaWorkflow(
@@ -1022,35 +1136,49 @@ def enqueueAssetImageTask(assetId):
 
 def _collectShotCharacterRefUploads(shotRow, projectAssets, comfyEndpoint):
     """
-    收集本镜出场角色定妆照并上传至云端：
-    仅将角色定妆照作为 ReferenceLatent 注入 Flux3-Klein（绝不将广角场景空镜图塞入 ReferenceLatent，
-    防止 Flux3 将场景空镜当成固定壁纸把人物像贴纸一样合成在前景、锁死景别与炉火动态状态）。
+    【即梦 Seedance 全能多主体参考 (Omni-Reference)】
+    按优先级收集本镜绑定的“角色定妆图 (character) -> 场景空间母板图 (scene) -> 核心交互道具图 (prop)”并上传至云端，
+    供 H3ReferenceEditPrepare 与 MiniMaxH3ReferenceToVideo 同时锁死人物外貌、房间建筑光影与道具造型（最多 6 张）。
     """
     assetMap = {str(a.get("name", "")).lstrip("@").strip(): a for a in (projectAssets or [])}
     try:
         refs = json.loads(shotRow.get("referenceAssetsJson") or "[]")
     except Exception:
         refs = []
-    charUploads = []
+
+    charUploads, sceneUploads, propUploads = [], [], []
     for r in refs:
         if not isinstance(r, dict):
             continue
         aName = str(r.get("asset", "")).lstrip("@").strip()
         aObj = assetMap.get(aName)
-        if not aObj or aObj.get("assetType") != "character" or not aObj.get("imageUrl"):
+        if not aObj or not aObj.get("imageUrl"):
             continue
         imgUrl = str(aObj["imageUrl"])
         if "_1793949" in imgUrl:
             continue
         localPath = resolveMediaUrlToPath(imgUrl)
-        if localPath and localPath.exists():
-            try:
-                upName = uploadImageToComfy(localPath, comfyEndpoint)
-                if upName and upName not in charUploads:
-                    charUploads.append(upName)
-            except Exception:
-                pass
-    return charUploads[:2]
+        if not localPath or not localPath.exists():
+            continue
+        try:
+            upName = uploadImageToComfy(localPath, comfyEndpoint)
+        except Exception:
+            continue
+        if not upName:
+            continue
+        aType = aObj.get("assetType")
+        if aType == "character" and upName not in charUploads:
+            charUploads.append(upName)
+        elif aType == "scene" and upName not in sceneUploads:
+            sceneUploads.append(upName)
+        elif aType == "prop" and upName not in propUploads:
+            propUploads.append(upName)
+
+    omniList = []
+    for item in charUploads[:3] + sceneUploads[:1] + propUploads[:2]:
+        if item not in omniList:
+            omniList.append(item)
+    return omniList[:6]
 
 
 def _collectShotVoiceRefUpload(shotRow, projectAssets, comfyEndpoint):
@@ -1085,10 +1213,10 @@ def _collectShotVoiceRefUpload(shotRow, projectAssets, comfyEndpoint):
 
 def _findSameSceneCameraRigMasterPlate(shotRow, comfyEndpoint):
     """
-    【专业级同场多机位母板复用 (Multi-Cam Rig Master Plate)】
-    在同一场戏（如 [S01]）中，当正反打切回同一角色 + 同一景别机位时，
-    自动查找该角色在本场戏首次生成的高清静态首帧作为 <Picture 1> 机位母板，
-    确保正反打切回时背景厅堂柱子、光线、机位角度与人物长相 100% 锁定在同一时空！
+    【即梦式多机位正反打 & 同角色无缝延长防跳切 (Anti-Jump-Cut & Multi-Cam Rig)】
+    1. 若紧邻上一镜就是同一角色 (A -> A 连续镜头)：优先直接沿用上一镜已生成视频的真实最后一帧 (lastFrameUrl)，
+       实现即梦式“视频延长”一镜到底，彻底杜绝同机位闪回跳切 (Jump Cut)！
+    2. 若中间隔了对手反打镜头 (A -> B -> A 正反打切回)：才复用该角色在本场戏首次生成的同机位母板底图。
     """
     import re
     titleStr = str(shotRow.get("title") or "")
@@ -1115,16 +1243,32 @@ def _findSameSceneCameraRigMasterPlate(shotRow, comfyEndpoint):
         return "medium"
 
     targetChars = _charTuple(shotRow)
-    if not targetChars:
-        return None
     targetBucket = _framingBucket(shotRow.get("cameraFraming"))
 
     with closing(getDbConnection()) as conn:
         earlierShots = conn.execute(
-            "SELECT * FROM shots WHERE episodeId=? AND shotNumber < ? AND firstFrameUrl != '' ORDER BY shotNumber ASC",
+            "SELECT * FROM shots WHERE episodeId=? AND shotNumber < ? ORDER BY shotNumber ASC",
             (shotRow["episodeId"], shotRow["shotNumber"]),
         ).fetchall()
 
+    if not earlierShots:
+        return None
+
+    # 防跳切法则 1：若紧邻上一镜就是同一角色（且非空），绝不拿上一镜 0.0s 起点图重画，而是直接返回上一镜真实尾帧做无缝延长
+    immedPrev = dict(earlierShots[-1])
+    if targetChars and _charTuple(immedPrev) == targetChars:
+        prevEndUrl = str(immedPrev.get("lastFrameUrl") or "")
+        if prevEndUrl:
+            localEnd = resolveMediaUrlToPath(prevEndUrl)
+            if localEnd and localEnd.exists():
+                try:
+                    return uploadImageToComfy(localEnd, comfyEndpoint)
+                except Exception:
+                    pass
+        return None
+
+    # 筛选同场戏历史有效高清首帧母板
+    sameSceneEarlier = []
     for earlier in earlierShots:
         eDict = dict(earlier)
         eUrl = str(eDict.get("firstFrameUrl") or "")
@@ -1132,13 +1276,33 @@ def _findSameSceneCameraRigMasterPlate(shotRow, comfyEndpoint):
             continue
         if scenePrefix and f"[{scenePrefix}]" not in str(eDict.get("title") or ""):
             continue
-        if _charTuple(eDict) == targetChars and _framingBucket(eDict.get("cameraFraming")) == targetBucket:
-            localPlate = resolveMediaUrlToPath(eUrl)
-            if localPlate and localPlate.exists():
-                try:
-                    return uploadImageToComfy(localPlate, comfyEndpoint)
-                except Exception:
-                    continue
+        sameSceneEarlier.append((eDict, eUrl))
+
+    # 正反打 & 阵营分组法则 2：隔镜切回同一角色或同一阵营小组且景别一致时，复用首次同机位固定母板底图
+    if targetChars:
+        for eDict, eUrl in sameSceneEarlier:
+            if eDict["id"] == immedPrev["id"]:
+                continue
+            if _charTuple(eDict) == targetChars and _framingBucket(eDict.get("cameraFraming")) == targetBucket:
+                localPlate = resolveMediaUrlToPath(eUrl)
+                if localPlate and localPlate.exists():
+                    try:
+                        return uploadImageToComfy(localPlate, comfyEndpoint)
+                    except Exception:
+                        continue
+
+    # 多人重定场 & 道具桌面母板法则 3：
+    # - 多人/双人全景重定场镜自动回溯复用本场戏最早的全景定场母板，保证房间格局 100% 不变；
+    # - 无人物纯道具特写镜优先复用同场定场母板保持桌面材质与烛光色温统一。
+    if targetBucket == "wide" or (not targetChars):
+        for eDict, eUrl in sameSceneEarlier:
+            if _framingBucket(eDict.get("cameraFraming")) == "wide" or (not targetChars and len(_charTuple(eDict)) >= 2):
+                localPlate = resolveMediaUrlToPath(eUrl)
+                if localPlate and localPlate.exists():
+                    try:
+                        return uploadImageToComfy(localPlate, comfyEndpoint)
+                    except Exception:
+                        continue
     return None
 
 
@@ -1186,8 +1350,12 @@ def enqueueKeyframeTask(shotId, frameRole="both", forceRegenerate=True):
                     shotRow = dict(conn.execute("SELECT * FROM shots WHERE id=?", (shotId,)).fetchone())
                     projectAssets = [dict(a) for a in conn.execute("SELECT * FROM assets WHERE projectId=?", (shotRow["projectId"],))]
 
-                width, height = getAspectRatioDimensions(projRow.get("aspectRatio", "16:9"), isVideo=False)
                 comfyStatus = checkComfyStatus()
+                width, height = getAspectRatioDimensions(
+                    projRow.get("aspectRatio", "16:9"),
+                    isVideo=False,
+                    is24GbCard=bool(comfyStatus.get("is24GbCard")),
+                )
                 sharedSeed = random.randint(1, 2147483647)
 
                 firstUrl = shotRow.get("firstFrameUrl") or ""
@@ -1204,6 +1372,8 @@ def enqueueKeyframeTask(shotId, frameRole="both", forceRegenerate=True):
 
                 epUrl = comfyStatus["endpoint"]
                 charRefUploads = _collectShotCharacterRefUploads(shotRow, projectAssets, epUrl)
+                if comfyStatus.get("is24GbCard"):
+                    charRefUploads = charRefUploads[:2]
                 firstPathLocal = resolveMediaUrlToPath(firstUrl) if firstUrl else None
 
                 if needFirst:
@@ -1327,14 +1497,38 @@ def enqueueShotVideoTask(shotId, engineOverride=None):
                     shotRow = dict(conn.execute("SELECT * FROM shots WHERE id=?", (shotId,)).fetchone())
                     projectAssets = [dict(a) for a in conn.execute("SELECT * FROM assets WHERE projectId=?", (shotRow["projectId"],))]
 
-                vWidth, vHeight = getAspectRatioDimensions(projRow.get("aspectRatio", "16:9"), isVideo=True)
                 comfyStatus = checkComfyStatus()
                 if not comfyStatus["online"]:
                     raise RuntimeError(f"云端 ComfyUI 算力服务未在线 ({comfyStatus.get('endpoint')})，已拒绝生成本地静态推拉假视频")
+                is24Gb = bool(comfyStatus.get("is24GbCard"))
+                vWidth, vHeight = getAspectRatioDimensions(projRow.get("aspectRatio", "16:9"), isVideo=True, is24GbCard=is24Gb)
 
-                # 2. 确保首帧（以及动作推进镜的尾帧）就绪，并强制注入同场固定机位母板 + 角色/场景 DNA
+                # 2. 确保首帧就绪：若紧邻上一镜为同角色连续镜头且上一镜已有成片，强制提取上一镜真实最末视频帧作为本镜首帧（实现即梦式 0 跳切“视频延长”）
                 firstUrl = shotRow.get("firstFrameUrl") or ""
                 lastUrl = shotRow.get("lastFrameUrl") or ""
+                with closing(getDbConnection()) as conn:
+                    prevShotRow = conn.execute(
+                        "SELECT * FROM shots WHERE episodeId=? AND shotNumber < ? ORDER BY shotNumber DESC LIMIT 1",
+                        (shotRow["episodeId"], shotRow["shotNumber"]),
+                    ).fetchone()
+                if prevShotRow:
+                    prevDict = dict(prevShotRow)
+                    from .continuityManager import _extractShotCharacterKey
+                    curChars = _extractShotCharacterKey(shotRow)
+                    prevChars = _extractShotCharacterKey(prevDict)
+                    if (int(shotRow.get("lockFromPrevEnd") or 0) == 1 or (curChars and curChars == prevChars)) and prevDict.get("videoUrl"):
+                        try:
+                            exactPrevLastUrl = extractHighResLastFrameFromVideo(prevDict["id"], forceFromVideo=True)
+                            if exactPrevLastUrl:
+                                firstUrl = exactPrevLastUrl
+                                with closing(getDbConnection()) as conn:
+                                    conn.execute(
+                                        "UPDATE shots SET firstFrameUrl=?, lockFromPrevEnd=1, continuityMode='continue_action', updatedAt=? WHERE id=?",
+                                        (firstUrl, time.time(), shotId),
+                                    )
+                                    conn.commit()
+                        except Exception as extErr:
+                            print(f"[comfyBridge] 自动提取上一镜末尾帧做无缝延长提示: {extErr}")
                 # 自动识别并淘汰旧版遗留的带中文标牌乱码关键帧或离线假关键帧
                 if firstUrl and any(oldTag in firstUrl for oldTag in ("_1793949", "_1793950", "_179436178")):
                     firstUrl = ""
@@ -1377,9 +1571,44 @@ def enqueueShotVideoTask(shotId, engineOverride=None):
                 lastPath = resolveMediaUrlToPath(lastUrl) if lastUrl else None
 
                 engine = engineOverride or shotRow.get("videoEngine") or "h3_fl2va"
-                enableUpscale = str(projRow.get("enableUpscale3d", 0)) == "1"
+                # 配音先行（Audio-First）：若本镜含台词且已开启音频锁声驱动且无影 IndexTTS-2 在线，先自动配音并按真实音频时长锁帧数
+                driveAudioUploaded = None
+                try:
+                    shotDlgs = json.loads(shotRow.get("dialogueJson") or "[]")
+                except Exception:
+                    shotDlgs = []
+                hasSpokenLine = any(isinstance(d, dict) and str(d.get("text") or "").strip() for d in shotDlgs)
+                enableAudioDrive = str(getSettingValue("enableAudioDrivenLipSync", "1")) == "1"
+                if hasSpokenLine and enableAudioDrive and engine != "wan22_moe":
+                    try:
+                        from .ttsBridge import checkTtsStatus, synthesizeShotDialogueAudio
+                        ttsUrl = str(shotRow.get("ttsAudioUrl") or "").strip()
+                        ttsPath = resolveMediaUrlToPath(ttsUrl) if ttsUrl else None
+                        if not (ttsPath and ttsPath.exists() and ttsPath.stat().st_size > 2048):
+                            if checkTtsStatus().get("online"):
+                                with closing(getDbConnection()) as conn:
+                                    conn.execute(
+                                        "UPDATE renderTasks SET phaseText='正在调用无影 IndexTTS-2 生成角色固定声纹配音...', updatedAt=? WHERE id=?",
+                                        (time.time(), taskId),
+                                    )
+                                    conn.commit()
+                                ttsRes = synthesizeShotDialogueAudio(shotId, forceRegenerate=False)
+                                ttsUrl = ttsRes.get("ttsAudioUrl") or ""
+                                ttsPath = resolveMediaUrlToPath(ttsUrl) if ttsUrl else None
+                                if ttsRes.get("recommendedShotDur"):
+                                    shotRow["durationSec"] = float(ttsRes["recommendedShotDur"])
+                        if ttsPath and ttsPath.exists():
+                            driveAudioUploaded = uploadAudioToComfy(ttsPath, comfyStatus["endpoint"])
+                    except Exception as ttsErr:
+                        print(f"[comfyBridge] IndexTTS-2 配音先行回退原生发声: {ttsErr}")
+
+                enableUpscale = (str(projRow.get("enableUpscale3d", 0)) == "1") and (not is24Gb)
                 steps = max(4, int(getSettingValue("h3SamplingSteps", "16") or 16))
                 frameLength = calculateH3FrameGrid(shotRow.get("durationSec", 5.0))
+                if is24Gb:
+                    # 896x512 画幅像素面积仅占 1344x768 的 44%，24GB 卡可安全跑 107~124 帧 (4.5~5.17s)，确保长句台词从容说完不腰斩
+                    frameLength = min(124, max(107, frameLength))
+                    charRefUploads = charRefUploads[:2]
 
                 upFirst = uploadImageToComfy(firstPath, comfyStatus["endpoint"])
                 # 默认关闭强制首尾双锚点（单首帧自由演进动作更自然流畅；仅在显式开启 strictDualFrameAnchor=1 时锁尾帧）
@@ -1407,7 +1636,22 @@ def enqueueShotVideoTask(shotId, engineOverride=None):
                         numFrames=81,
                         steps=20,
                     )
-                elif engine == "h3_ref2va" or (engine == "h3_fl2va" and not upLast and voiceRefUpload):
+                elif driveAudioUploaded:
+                    compiledPrompt = compileFl2vaVideoPrompt(shotRow, hasLastFrame=bool(upLast))
+                    wfVideo = buildH3AudioDrivenWorkflow(
+                        compiledPrompt,
+                        upFirst,
+                        driveAudioUploadedName=driveAudioUploaded,
+                        lastFrameUploadedName=upLast,
+                        referenceUploadedNames=charRefUploads if (not is24Gb and engine == "h3_ref2va") else None,
+                        width=vWidth,
+                        height=vHeight,
+                        length=frameLength,
+                        steps=steps,
+                        enableUpscale3d=enableUpscale,
+                        useRef2vaBase=(not is24Gb and engine == "h3_ref2va"),
+                    )
+                elif (not is24Gb) and (engine == "h3_ref2va" or (engine == "h3_fl2va" and not upLast and (voiceRefUpload or charRefUploads))):
                     compiledPrompt = compileFl2vaVideoPrompt(shotRow, hasLastFrame=False)
                     wfVideo = buildH3Ref2vaWorkflow(
                         compiledPrompt,

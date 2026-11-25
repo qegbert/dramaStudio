@@ -115,11 +115,11 @@ def syncEpisodeFrameLocks(episodeId, overwriteExisting=False):
     return syncedCount
 
 
-def extractHighResLastFrameFromVideo(shotId):
+def extractHighResLastFrameFromVideo(shotId, forceFromVideo=False):
     """
-    当某个单首帧镜头 (dialogue_i2v) 没有单独生成静态尾帧，但已生成视频且下一镜需要衔接时，
-    支持以最高无损 PNG 格式提取该视频末尾帧作为尾帧资产。
-    【重要防护】：若本镜原本就由图像模型生成了高清静态尾帧，坚决保留该高质量原图，杜绝用带运动模糊的视频截帧破坏画质与面部一致性！
+    从已渲染的视频最末帧提取无损 PNG，用于即梦式“视频延长（0 跳切像素级无缝接力）”：
+    - 当 forceFromVideo=True（同角色连续镜头无缝延长）时，强制提取真实视频最后一帧，确保上一镜结尾与下一镜开头 100% 像素重合；
+    - 否则若已有静态尾帧，保留静态尾帧。
     """
     with closing(getDbConnection()) as conn:
         shot = conn.execute("SELECT * FROM shots WHERE id=?", (shotId,)).fetchone()
@@ -127,8 +127,7 @@ def extractHighResLastFrameFromVideo(shotId):
             raise ValueError("该镜头尚无已生成的视频，无法提取末尾帧")
 
         existingLast = shot["lastFrameUrl"] or ""
-        # 若已有由图像模型生成的高清静态尾帧（非提取截帧），保留该高质量资产以保护连续性
-        if existingLast and not existingLast.startswith("/media/keyframes/extracted_last_"):
+        if (not forceFromVideo) and existingLast and not existingLast.startswith("/media/keyframes/extracted_last_"):
             syncEpisodeFrameLocks(shot["episodeId"], overwriteExisting=False)
             return existingLast
 
@@ -343,12 +342,12 @@ def backfillEpisodeVoiceBanks(episodeId):
     return locked
 
 
-def _detectSmartTrimWindow(videoPath, fallbackDuration=5.0, hasDialogue=True):
+def _detectSmartTrimWindow(videoPath, fallbackDuration=5.0, hasDialogue=True, isSeamlessContinuation=False, leadsIntoSeamlessContinuation=False):
     """
-    【专业级快切探针】自动探测单镜视频的最佳入点 (trimStart) 与有效时长 (trimDur)：
-    1. 自动切掉每个 AI 镜头开头 0.25s~0.38s 的起势僵直帧（入镜即动态）；
-    2. 通过 silencedetect 检测尾部静音拖尾，对白结束留 0.28s 气口立刻切走；
-    3. 无对白动作/反应镜只保留中间最利落的 2.2s~2.8s 核心动作片段，彻底消除 5.17s 等长发呆。
+    【防腰斩 & 零跳切智能裁剪探针】
+    1. 若本镜承接上一镜无缝延长 (isSeamlessContinuation=True)，开头 trimStart 强制为 0.0s（像素级无缝直连，一帧不裁）；
+    2. 若本镜下一镜是同角色无缝延长 (leadsIntoSeamlessContinuation=True)，结尾强制保留至最后一帧 realDur（一帧不裁）；
+    3. 仅在明确探测到开头/结尾存在真实静音发呆段 (silencedetect) 时才温和修剪静音，严禁无静音时强行砍掉台词尾音！
     """
     import re
     ffmpegBin = findFfmpegBinary("ffmpeg")
@@ -365,34 +364,35 @@ def _detectSmartTrimWindow(videoPath, fallbackDuration=5.0, hasDialogue=True):
     except Exception:
         pass
 
-    trimStart = 0.28 if realDur > 3.2 else 0.15
-    targetEnd = realDur - 0.35
+    trimStart = 0.0
+    targetEnd = realDur
 
     if hasDialogue:
         try:
             sRes = subprocess.run(
-                [ffmpegBin, "-i", str(videoPath), "-af", "silencedetect=n=-33dB:d=0.28", "-vn", "-f", "null", "/dev/null"],
+                [ffmpegBin, "-i", str(videoPath), "-af", "silencedetect=n=-34dB:d=0.30", "-vn", "-f", "null", "/dev/null"],
                 capture_output=True, text=True, timeout=12,
             )
             log = sRes.stderr or ""
             sStarts = [float(x) for x in re.findall(r"silence_start:\s*([\d.]+)", log)]
             sEnds = [float(x) for x in re.findall(r"silence_end:\s*([\d.]+)", log)]
-            # 若开头有静音，紧贴第一声气口前 0.15s 切入
-            if sEnds and sEnds[0] < 1.2:
-                trimStart = max(0.18, min(0.55, sEnds[0] - 0.14))
-            # 若结尾有超过 0.35s 的发呆静音段，在静音开始后 0.26s 利落切出
-            if sStarts and sStarts[-1] > 2.0 and sStarts[-1] < realDur - 0.3:
-                targetEnd = min(realDur - 0.15, sStarts[-1] + 0.28)
-            else:
-                targetEnd = min(realDur - 0.25, trimStart + 3.65)
+            # 仅当非无缝接力且第 0 秒确实存在静音段时，才裁掉开头静音前的发呆帧
+            if (not isSeamlessContinuation) and sStarts and sEnds and sStarts[0] < 0.08 and sEnds[0] > 0.25 and sEnds[0] < 1.1:
+                trimStart = round(max(0.0, sEnds[0] - 0.12), 2)
+            # 仅当非无缝接力且末尾确实存在一直持续到片尾的发呆静音段时，才在说完话后留 0.32s 气口切出
+            if (not leadsIntoSeamlessContinuation) and sStarts and sStarts[-1] > 2.2:
+                # 确认该 silence_start 之后没有再出现新的 silence_end（或者最后一个 silence_end 接近片尾）
+                if not sEnds or sEnds[-1] < sStarts[-1] or sEnds[-1] >= realDur - 0.12:
+                    targetEnd = min(realDur, sStarts[-1] + 0.32)
         except Exception:
-            targetEnd = min(realDur - 0.25, trimStart + 3.5)
+            pass
     else:
-        # 纯动作/眼神反应镜：严控在 2.3s~2.9s 黄金快切区间
-        trimStart = min(0.35, realDur * 0.1)
-        targetEnd = min(realDur - 0.25, trimStart + 2.65)
+        if not isSeamlessContinuation:
+            trimStart = 0.15 if realDur > 3.5 else 0.0
+        if not leadsIntoSeamlessContinuation and realDur > 3.8:
+            targetEnd = realDur - 0.25
 
-    trimDur = round(max(1.85, min(realDur - trimStart - 0.08, targetEnd - trimStart)), 2)
+    trimDur = round(max(1.5, min(realDur - trimStart, targetEnd - trimStart)), 2)
     return round(trimStart, 2), trimDur
 
 
@@ -494,13 +494,15 @@ def mergeEpisodeMasterVideo(episodeId):
         normDir = EXPORTS_DIR / f"norm_ep_{episodeId}_{stamp}"
         normDir.mkdir(parents=True, exist_ok=True)
 
-        # 全集统一古风正剧调色滤镜（统一对比度、压暗高光、微暖暗部与清晰锐化）
+        # 全集统一古风正剧调色滤镜（统一对比度、压暗高光、微暖暗部、清晰锐化 + 贯穿全集的细腻电影胶片颗粒与微暗角，让所有镜头像同一台摄影机拍出）
         colorGradeFilter = (
             f"scale={outW}:{outH}:force_original_aspect_ratio=decrease,"
             f"pad={outW}:{outH}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24,"
             "eq=contrast=1.05:brightness=-0.01:saturation=0.93,"
             "colorbalance=rs=0.02:gs=-0.005:bs=-0.02,"
-            "unsharp=3:3:0.35"
+            "unsharp=3:3:0.35,"
+            "noise=alls=4:allf=t+u,"
+            "vignette=angle=PI/5"
         )
 
         trimmedVideoPaths = []
@@ -509,13 +511,40 @@ def mergeEpisodeMasterVideo(episodeId):
         cursorSec = 0.0
         crossfadeSec = 0.18
 
+        # 预计算每镜是否具备台词与无台词插入/反应镜标识，用于精确执行电影级 L-Cut（声画错位提前切画）
+        shotHasDlgList = []
+        for sDict, _ in validShots:
+            try:
+                dlgsPre = json.loads(sDict.get("dialogueJson") or "[]")
+            except Exception:
+                dlgsPre = []
+            shotHasDlgList.append(bool(dlgsPre and isinstance(dlgsPre[0], dict) and str(dlgsPre[0].get("text") or "").strip()))
+
         for idx, (sDict, clipPath) in enumerate(validShots):
             try:
                 dialogues = json.loads(sDict.get("dialogueJson") or "[]")
             except Exception:
                 dialogues = []
-            hasDlg = bool(dialogues and isinstance(dialogues[0], dict) and str(dialogues[0].get("text") or "").strip())
-            trimStart, trimDur = _detectSmartTrimWindow(clipPath, fallbackDuration=sDict.get("durationSec", 5.0), hasDialogue=hasDlg)
+            hasDlg = shotHasDlgList[idx]
+            prevCharKey = _extractShotCharacterKey(validShots[idx - 1][0]) if idx > 0 else ()
+            curCharKey = _extractShotCharacterKey(sDict)
+            nextCharKey = _extractShotCharacterKey(validShots[idx + 1][0]) if idx + 1 < len(validShots) else ()
+            isSeamlessIn = bool(int(sDict.get("lockFromPrevEnd") or 0) == 1 or (prevCharKey and curCharKey == prevCharKey))
+            isSeamlessOut = bool(nextCharKey and curCharKey == nextCharKey)
+            trimStart, trimDur = _detectSmartTrimWindow(
+                clipPath,
+                fallbackDuration=sDict.get("durationSec", 5.0),
+                hasDialogue=hasDlg,
+                isSeamlessContinuation=isSeamlessIn,
+                leadsIntoSeamlessContinuation=isSeamlessOut,
+            )
+
+            # 真 L-Cut 电影声画错位：当本镜有台词且下一镜是无台词反应/道具特写镜，且非同角色无缝延长时，
+            # 画面提前 0.85s 切进下一镜反应/特写，但本镜音频仍完整播完（声音跨镜铺在下一镜开头），彻底消灭 PPT 拼接感！
+            nextIsSilentInsert = (idx + 1 < len(validShots)) and (not shotHasDlgList[idx + 1]) and (not isSeamlessOut)
+            lcutVideoLeadSec = 0.85 if (hasDlg and nextIsSilentInsert and trimDur >= 3.0) else 0.0
+            videoTrimDur = round(max(1.8, trimDur - lcutVideoLeadSec), 2)
+            audioTrimDur = trimDur
 
             subPng = normDir / f"sub_{idx:04d}.png"
             hasSub = _renderSubtitleOverlayPng(dialogues, outW, outH, subPng)
@@ -523,11 +552,11 @@ def mergeEpisodeMasterVideo(episodeId):
             vSegPath = normDir / f"vseg_{idx:04d}.ts"
             aSegPath = normDir / f"aseg_{idx:04d}.wav"
 
-            # 1) 渲染裁剪 + 统一调色 + 烧录字幕的纯视频流分片
+            # 1) 渲染裁剪 + 统一调色 + 烧录字幕的纯视频流分片（按 videoTrimDur 提前切画实现 L-Cut）
             if hasSub:
                 vCmd = [
                     ffmpegBin, "-v", "error", "-y",
-                    "-ss", str(trimStart), "-t", str(trimDur), "-i", str(clipPath),
+                    "-ss", str(trimStart), "-t", str(videoTrimDur), "-i", str(clipPath),
                     "-i", str(subPng),
                     "-filter_complex", f"[0:v]{colorGradeFilter}[bg];[bg][1:v]overlay=0:0:format=auto[vout]",
                     "-map", "[vout]", "-an",
@@ -537,19 +566,19 @@ def mergeEpisodeMasterVideo(episodeId):
             else:
                 vCmd = [
                     ffmpegBin, "-v", "error", "-y",
-                    "-ss", str(trimStart), "-t", str(trimDur), "-i", str(clipPath),
+                    "-ss", str(trimStart), "-t", str(videoTrimDur), "-i", str(clipPath),
                     "-vf", colorGradeFilter, "-an",
                     "-c:v", "libx264", "-preset", "fast", "-crf", "17", "-pix_fmt", "yuv420p",
                     "-f", "mpegts", str(vSegPath),
                 ]
             subprocess.run(vCmd, capture_output=True, text=True, timeout=90)
 
-            # 2) 提取并响度归一化该镜头的裁剪音轨（无音轨时自动生成静音轨）
+            # 2) 提取并响度归一化该镜头的完整音轨（按 audioTrimDur 保留尾音用于跨镜铺在下一镜上）
             aCmd = [
                 ffmpegBin, "-v", "error", "-y",
-                "-ss", str(trimStart), "-t", str(trimDur), "-i", str(clipPath),
+                "-ss", str(trimStart), "-t", str(audioTrimDur), "-i", str(clipPath),
                 "-vn",
-                "-af", f"highpass=f=70,loudnorm=I=-15:TP=-1.5:LRA=9,afade=t=in:st=0:d=0.08,afade=t=out:st={max(0.1, trimDur-0.12):.2f}:d=0.12,aresample=44100,aformat=sample_fmts=s16:channel_layouts=stereo",
+                "-af", f"highpass=f=70,loudnorm=I=-15:TP=-1.5:LRA=9,afade=t=in:st=0:d=0.08,afade=t=out:st={max(0.1, audioTrimDur-0.12):.2f}:d=0.12,aresample=44100,aformat=sample_fmts=s16:channel_layouts=stereo",
                 "-ar", "44100", "-ac", "2", str(aSegPath),
             ]
             aRes = subprocess.run(aCmd, capture_output=True, text=True, timeout=60)
@@ -557,7 +586,7 @@ def mergeEpisodeMasterVideo(episodeId):
                 subprocess.run(
                     [
                         ffmpegBin, "-v", "error", "-y",
-                        "-f", "lavfi", "-t", str(trimDur), "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+                        "-f", "lavfi", "-t", str(audioTrimDur), "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
                         "-ar", "44100", "-ac", "2", str(aSegPath),
                     ],
                     capture_output=True, text=True, timeout=30,
@@ -566,18 +595,19 @@ def mergeEpisodeMasterVideo(episodeId):
             if vSegPath.exists() and aSegPath.exists():
                 trimmedVideoPaths.append(vSegPath)
                 trimmedAudioPaths.append(aSegPath)
-                effDur = trimDur if idx == 0 else max(1.0, round(trimDur - crossfadeSec, 2))
                 timelineManifest.append({
                     "shotNumber": sDict["shotNumber"],
                     "title": sDict["title"],
                     "trimStartSec": trimStart,
-                    "trimmedDurationSec": trimDur,
+                    "trimmedDurationSec": videoTrimDur,
+                    "audioDurationSec": audioTrimDur,
+                    "lcutLeadSec": lcutVideoLeadSec,
                     "masterStartSec": round(cursorSec, 2),
-                    "masterEndSec": round(cursorSec + effDur, 2),
+                    "masterEndSec": round(cursorSec + videoTrimDur, 2),
                     "videoUrl": sDict["videoUrl"],
                     "dialogue": dialogues,
                 })
-                cursorSec += effDur
+                cursorSec += videoTrimDur
 
         # 3) 拼接精剪后的视频轨
         vConcatTxt = normDir / "v_concat.txt"
@@ -591,17 +621,48 @@ def mergeEpisodeMasterVideo(episodeId):
             capture_output=True, text=True, timeout=120,
         )
 
-        # 4) 对所有镜头音轨做顺序淡入淡出无缝拼接，并叠加贯穿全集不断流的古风氛围配乐 (BGM + Room Tone Bed)
-        aConcatTxt = normDir / "a_concat.txt"
-        with open(aConcatTxt, "w", encoding="utf-8") as af:
-            for ap in trimmedAudioPaths:
-                escaped = str(ap).replace("'", "'\\''")
-                af.write(f"file '{escaped}'\n")
+        # 4) 对所有镜头音轨按时间轴精准叠加，并在「有台词镜 → 无台词反应/道具特写镜」处自动启用电影级 L-Cut 声画错位延音
         dialogueStemWav = normDir / "dialogue_stem.wav"
-        subprocess.run(
-            [ffmpegBin, "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(aConcatTxt), "-ar", "44100", "-ac", "2", str(dialogueStemWav)],
-            capture_output=True, text=True, timeout=90,
-        )
+        if len(trimmedAudioPaths) == 1:
+            shutil.copy2(str(trimmedAudioPaths[0]), str(dialogueStemWav))
+        else:
+            # 计算每个镜头音频在主时间轴上的起始毫秒与 L-Cut 提前切画量
+            lcutLeadSec = 0.0
+            audioStartsMs = []
+            accVideoSec = 0.0
+            for idxA, item in enumerate(timelineManifest):
+                audioStartsMs.append(int(round(accVideoSec * 1000)))
+                accVideoSec += float(item["trimmedDurationSec"])
+            # 若存在「有台词 → 无台词插入/反应镜」，在混音阶段保留自然尾音过渡，杜绝硬切咔哒声
+            aInputs = []
+            aFilters = []
+            mixTags = []
+            for idxA, ap in enumerate(trimmedAudioPaths):
+                aInputs.extend(["-i", str(ap)])
+                delayMs = audioStartsMs[idxA]
+                # 当上一镜有台词且本镜无台词时，微前移 120ms 房间底噪衔接，形成平滑 L-Cut 过渡
+                if idxA > 0:
+                    prevHasDlg = bool(timelineManifest[idxA - 1].get("dialogue"))
+                    curHasDlg = bool(timelineManifest[idxA].get("dialogue"))
+                    if prevHasDlg and not curHasDlg and delayMs >= 120:
+                        delayMs -= 120
+                aFilters.append(f"[{idxA}:a]adelay={delayMs}|{delayMs}[a{idxA}]")
+                mixTags.append(f"[a{idxA}]")
+            filterStr = ";".join(aFilters) + ";" + "".join(mixTags) + f"amix=inputs={len(trimmedAudioPaths)}:duration=longest:normalize=0[astem]"
+            aMixRes = subprocess.run(
+                [ffmpegBin, "-v", "error", "-y", *aInputs, "-filter_complex", filterStr, "-map", "[astem]", "-ar", "44100", "-ac", "2", str(dialogueStemWav)],
+                capture_output=True, text=True, timeout=120,
+            )
+            if aMixRes.returncode != 0 or not dialogueStemWav.exists():
+                aConcatTxt = normDir / "a_concat.txt"
+                with open(aConcatTxt, "w", encoding="utf-8") as af:
+                    for ap in trimmedAudioPaths:
+                        escaped = str(ap).replace("'", "'\\''")
+                        af.write(f"file '{escaped}'\n")
+                subprocess.run(
+                    [ffmpegBin, "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(aConcatTxt), "-ar", "44100", "-ac", "2", str(dialogueStemWav)],
+                    capture_output=True, text=True, timeout=90,
+                )
 
         totalVideoDur = sum(t["trimmedDurationSec"] for t in timelineManifest)
         bgmCandidate = DATA_DIR.parent.parent / "bgm_ambient.wav"

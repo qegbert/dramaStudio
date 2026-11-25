@@ -228,17 +228,25 @@ def _callLlmForSceneLedger(novelText, existingAssets, visualStyle, llmConfig):
         "     * 若原文是宗门管事/军官/权贵：按原文对应的品级描写管事袍、边军旧甲或华服。\n"
         "   - 提取 `scene` 资产时，必须 100% 还原当前剧本的真实时代与气候环境（如边塞寒冬雪院、修仙铸坊大殿等），地面与空间布局必须干净合理，严禁写 `scattered with broken...`、`debris`、`rubble`、`tool walls`、`wooden tool racks`！\n"
         "   - 古代/修仙场景下严禁出现 `wrench`、`spanner`、`valve`、`bolt` 等现代机械词汇！严禁让人物手部悬空冒火或手搓火球！\n"
-        "4. 【严格锁定 180° 空间对视轴线（杜绝证件照式正脸发呆）】：\n"
-        "   - 同一场戏内必须锁死左右站位轴线：主角始终位于画面左侧 3/4 侧身朝向画面右侧（`positioned on screen-left angled 3/4 facing screen-right`），对手/配角始终位于画面右侧 3/4 侧身朝向画面左侧（`positioned on screen-right angled 3/4 facing screen-left`）。\n"
-        "   - 在每个节拍的 `startPoseEn` 和 `endPoseEn` 中必须显式写出该站位与视线朝向！\n"
-        "5. 【同角色跨镜头动作首尾咬合锁（保障视频无缝接力）】：\n"
-        "   - 同一角色在场内第 2、3、4 次出场时，其 `startPoseCn` 与 `startPoseEn` 必须严格承接该角色上一次出场镜头的 `endPoseCn` 与 `endPoseEn`（以 `Continuing directly from his previous ending pose...` 开头），并将 `lockFromPrevEnd` 设为 1，让前后镜头动作如一镜到底般顺滑咬合！\n"
-        "6. 【全集单人主导正反打 · 短剧黄金节奏（精选 7~8 个高燃镜头）】：\n"
-        "   - 为保障 3D 国漫人物五官颜值精度、口型 100% 准确以及跨镜头真实视频尾帧无缝接力，所有节拍必须严格采用【单人主导构图 (SOLO SHOT)】！每个节拍的 `charactersInShot` 数组严格只填 1 个当前镜头核心角色，绝不在同一镜头里混入两个人！\n"
-        "   - 核心高光动作必须全部由当前镜头角色单人一气呵成完成，在 `startPoseEn`、`actionEn`、`endPoseEn` 中只描写当前这 1 个角色的连续动作！\n"
-        "   - 每个节拍的 `dialogue` 数组最多只能有 1 句台词（控制在 10~22 字以内，保留原著最提气的灵魂金句）。全集严格精选 7~8 个刀刀见血的高浓度镜头！\n"
-        "7. 【高振幅连续物理动作 & 纯英文视觉描述】：\n"
-        "   - 每个节拍的 `actionEn` 必须包含饱满具体的物理动作动词与光影变化；所有 `*En` 与 `visualPrompt` 字段必须为 100% 纯英文（严禁夹杂中文或拼音名字，统一用符合该角色当前剧本真实服饰设定的英文短语指代人物）。\n"
+        "4. 【按场次人数自适应定场 + 三区阵营空间轴线（彻底消灭单人小黑屋割裂感，同时完美兼容 1人/2人/多人大场面）】：\n"
+        "   - 严禁把整集拍成毫无空间联系的单人大头照拼盘！请严格按本场出场人数自动执行以下调度法则：\n"
+        "   - **1人独角戏**：第 1 镜为环境全景/中全景定场镜（`Establishing wide shot`），先交代人物与空间关系再切动作与特写。\n"
+        "   - **2人对手戏**：第 1 镜必须为双人同框定场镜（`Two-shot wide establishing shot` 或 `Over-the-shoulder two-shot`），锁死左右 180° 轴线（主角在画面左侧朝右，对手在画面右侧朝左）。\n"
+        "   - **3人及以上多人大场面（如公堂对质、宗族议事、宴会冲突）**：\n"
+        "     * 第 1 镜必须为**群体阵营全景定场镜（`Group master wide establishing shot`）**，明确交代 **左区阵营（Screen-Left）/ 中区主位（Center）/ 右区阵营（Screen-Right）** 的三区空间地图；\n"
+        "     * 严禁在单张中近景硬塞 4~6 张高清人脸！后续镜头按阵营拆分为**局部 2~3 人小组中景（`Two-shot` / `Three-shot cluster`）+ 核心发言人近景 + 关键听众反应镜**，单镜清晰正脸角色严格 ≤ 3 人（其余以虚化前景肩部或远景背影呈现）；\n"
+        "     * 严格遵守三区视线坐标（左看中/右、右看中/左、中位俯视左右），并在连续 4~5 个特写后或有新角色闯入/局势反转时，切回一次**重定场镜（`Re-establishing wide shot` / `Over-the-shoulder two-shot`）**重新锚定全场空间！\n"
+        "5. 【镜头间物理因果咬合（Eyeline Match & Prop Causality，杜绝道具瞬移与逻辑倒置）】：\n"
+        "   - 严格遵守物理时间线：必须先拍【呈递/推匣/开匣/亮出信物】，再拍【对方低头查看并开口质问信物内容】！严禁“还没开匣取出账页，第 1 镜台词就已经在质问账页内容”的因果倒置！\n"
+        "   - 上一镜的 `endPoseEn`（出镜钩子）必须直接引出下一镜的 `startPoseEn`（入镜承接），视线与动作严密咬合。\n"
+        "6. 【电影级节奏：强制穿插无台词反应镜与道具特写插入镜（打破机械正反打 PPT 感）】：\n"
+        "   - 严禁 1~7 镜连续机械循环 `Medium shot -> Close-up shot` 且每镜硬塞台词！\n"
+        "   - 全集 8~12 镜中，**至少必须包含 2 个无台词纯表演/插入镜头（`dialogue: []`）**：例如 ① 核心信物/道具的极近特写插入镜（`Insert extreme close-up`，如朱砂暗印、虎符、密信特写）；② 对手听完关键台词后瞳孔微震、手指收紧的纯反应特写（`Reaction close-up`）。这些无台词镜头将用于后期 L-Cut/J-Cut 声画错位剪辑！\n"
+        "   - 若同一角色连续两镜说话或行动，必须二选一：① 将 `continuityMode` 设为 `continue_action` 且 `lockFromPrevEnd` 设为 `1`；或 ② 显著改变景别，严禁同角色同景别硬切！\n"
+        "   - 有台词的节拍 `dialogue` 数组最多 1 句核心台词（控制在 10~22 字以内，短剧节奏紧凑干脆）。\n"
+        "7. 【高振幅连续物理动作 & 严禁拼音人名】：\n"
+        "   - 每个节拍的 `actionEn` 必须包含饱满具体的物理动作动词与光影变化；\n"
+        "   - **严禁**在 `startPoseEn`、`actionEn`、`endPoseEn` 和 `visualPrompt` 中出现任何中文字符或中文拼音人名（例如绝对不能写 `Su Qingyan`、`Xie Linyuan`、`Lin Wanrou`），必须改用精准的英文人物视觉代称（如 `the noble lady in dark embroidered silk robe`、`the cold stern male official in dark crimson brocade robe`），确保生图与视频模型 100% 识别准确。\n"
         "只输出合法 JSON 对象，格式如下：\n"
         "{\n"
         '  "extractedAssets": [{"assetType":"character|scene|prop", "name":"准确中文名称", "roleTag":"身份/用途", "eraTag":"前世|今生|通用", "visualPrompt":"Pure English detailed visual prompt (strictly no Chinese characters inside visualPrompt)", "voiceProfile":"声线特征"}],\n'
@@ -283,9 +291,9 @@ def _callLlmForSceneLedger(novelText, existingAssets, visualStyle, llmConfig):
     userPrompt = (
         f"【全局视觉画风】：{visualStyle}\n"
         f"【项目已有资产】：\n{assetText or '无'}\n\n"
-        "【硬性篇幅与结构约束】：\n"
-        "- 请将整集剧情高度浓缩在 1 个核心主场景（`sceneLedger` 仅含 1 个主场景 `S01`）内一气呵成演完；\n"
-        "- 全集严格精选 7~8 个高张力节拍（`beats` 数量严格为 7~8 个），每个英文描述字段简明扼要（20~35 词以内），保留全部主线走向与爽点反转！\n\n"
+        "【硬性篇幅与连贯叙事约束】：\n"
+        "- 请将整集剧情高度凝聚在 1 个核心主场景（`sceneLedger` 含 1 个主场景 `S01`）内一气呵成演完，把场外事件通过人物闯入、呈递信物或当堂对质自然融入主场景；\n"
+        "- 全集拆解为 8~12 个因果咬合、视线相连的连贯节拍（严禁省略人物进场反应或道具交接过渡桥段，严禁上下镜台词不接茬），每个英文描述字段简明精炼（20~35 词以内）！\n\n"
         f"【待改写小说原文】：\n{novelText}"
     )
     rawModel = str(llmConfig.get("model") or "deepseek-chat").strip()
@@ -567,6 +575,67 @@ def extractPureEnglishVisual(rawText, eraTag=""):
     return text.strip()
 
 
+def _buildCompactVisualAlias(assetObj):
+    """从角色资产的 visualPrompt 中提炼简短、语义完整且高辨识度的英文视觉代称，用于替换模型不认识的中文拼音名"""
+    if not assetObj:
+        return ""
+    raw = extractPureEnglishVisual(assetObj.get("visualPrompt") or "", assetObj.get("eraTag") or "")
+    if not raw:
+        return ""
+    firstSentence = re.split(r"[.;]", raw)[0].strip()
+    clauses = [c.strip() for c in firstSentence.split(",") if c.strip()]
+    picked = []
+    for cl in clauses:
+        cand = ", ".join(picked + [cl])
+        if len(cand) <= 85 or not picked:
+            picked.append(cl)
+        else:
+            break
+    shortDesc = ", ".join(picked).strip(" ,")
+    shortDesc = re.sub(r"^(?:a|an|the)\s+", "", shortDesc, flags=re.IGNORECASE)
+    return f"the {shortDesc}" if shortDesc else ""
+
+
+def replacePinyinNamesWithVisualAnchors(text, projectAssets=None):
+    """
+    将英文分镜提示词中残留的中文拼音人名（如 Su Qingyan / Xie Linyuan / Lin Wanrou）
+    自动替换为资产表中对应角色的精准英文外貌与服饰锚点词，确保文生图/视频模型 100% 识别主体。
+    """
+    out = str(text or "")
+    if not out:
+        return out
+    knownPinyinToCn = {
+        "Su Qingyan": "苏清晏",
+        "Xie Linyuan": "谢临渊",
+        "Lin Wanrou": "林婉柔",
+        "Shen Ye": "沈夜",
+        "Lu Dachuan": "陆大川",
+    }
+    assetMap = {str(a.get("name", "")).lstrip("@").strip(): a for a in (projectAssets or []) if a.get("assetType") == "character"}
+    fallbackAliases = {
+        "Su Qingyan": "the composed noble lady in dark embroidered silk robe",
+        "Xie Linyuan": "the cold stern male official in dark crimson brocade robe",
+        "Lin Wanrou": "the scheming young noblewoman in ornate embroidered silk dress",
+        "Shen Ye": "the lean young frontier swordsman in dark weathered cloak",
+    }
+    for pyName, cnName in knownPinyinToCn.items():
+        if re.search(rf"\b{re.escape(pyName)}\b", out, flags=re.IGNORECASE):
+            matchedAsset = assetMap.get(cnName)
+            if not matchedAsset:
+                for k, v in assetMap.items():
+                    if cnName in k:
+                        matchedAsset = v
+                        break
+            repl = _buildCompactVisualAlias(matchedAsset) or fallbackAliases.get(pyName, "")
+            if repl:
+                bareRepl = re.sub(r"^the\s+", "", repl, flags=re.IGNORECASE)
+                out = re.sub(rf"\bthe\s+{re.escape(pyName)}'s\b", f"the {bareRepl}'s", out, flags=re.IGNORECASE)
+                out = re.sub(rf"\b{re.escape(pyName)}'s\b", f"the {bareRepl}'s", out, flags=re.IGNORECASE)
+                out = re.sub(rf"\bthe\s+{re.escape(pyName)}\b", f"the {bareRepl}", out, flags=re.IGNORECASE)
+                out = re.sub(rf"\b{re.escape(pyName)}\b", repl, out, flags=re.IGNORECASE)
+    return out
+
+
 def breakScriptIntoKeyframedShots(scriptText, projectAssets, visualStyle, llmConfig=None, sceneLedger=None):
     """
     【核心步骤二】将“场次空间调度账本 (sceneLedger)”或剧本拆解为“首帧 + 动作弧线 + 尾帧”结构化分镜列表。
@@ -619,16 +688,58 @@ def breakScriptIntoKeyframedShots(scriptText, projectAssets, visualStyle, llmCon
                 expandedBeats.append(rawBeat)
 
         seenSceneCharKeys = set()
-        for beat in expandedBeats:
-            # 严格采用单人主导正反打（SOLO FOCUS）：若有台词则锁定说话人为唯一入镜角色，否则取首位主导角色
+        prevShotCharKey = None
+        prevFramingBucket = None
+        for beatIdx, beat in enumerate(expandedBeats):
+            # 支持单人主导正反打及双人过肩/定场镜头（最多保留 2 名同框角色以交代空间关系）
             rawCharsInBeat = [str(c).lstrip("@").strip() for c in (beat.get("charactersInShot") or []) if str(c).strip()]
             beatDlgs = [d for d in (beat.get("dialogue") or []) if isinstance(d, dict) and str(d.get("speaker") or "").strip()]
-            if beatDlgs:
+            framingRaw = str(beat.get("framing") or "Medium shot")
+            # 铁律兜底：按场次人数自适应定场（1人全景、2人双人定场、3+人群体阵营全景定场，单镜清晰主体上限 3 人）
+            if beatIdx == 0:
+                if len(allowedChars) >= 3:
+                    if not any(k in framingRaw.lower() for k in ("wide", "establishing", "group", "master")):
+                        framingRaw = "Group master wide establishing shot"
+                        beat["framing"] = framingRaw
+                    if len(rawCharsInBeat) < 3:
+                        mergedGroup = list(rawCharsInBeat)
+                        for ac in allowedChars:
+                            if ac not in mergedGroup:
+                                mergedGroup.append(ac)
+                            if len(mergedGroup) >= 3:
+                                break
+                        rawCharsInBeat = mergedGroup
+                elif len(allowedChars) == 2:
+                    if not any(k in framingRaw.lower() for k in ("two", "over-the-shoulder", "ots", "wide", "establishing")):
+                        framingRaw = "Two-shot medium wide establishing shot"
+                        beat["framing"] = framingRaw
+                    if len(rawCharsInBeat) < 2:
+                        mergedTwo = list(rawCharsInBeat)
+                        for ac in allowedChars:
+                            if ac not in mergedTwo:
+                                mergedTwo.append(ac)
+                            if len(mergedTwo) >= 2:
+                                break
+                        rawCharsInBeat = mergedTwo
+            isMultiOrWide = any(k in framingRaw.lower() for k in ("group", "three", "two", "over-the-shoulder", "ots", "wide", "establishing", "re-establishing", "过肩", "双人", "群体", "全景"))
+            isPropInsert = (
+                (not beatDlgs)
+                and (not rawCharsInBeat)
+                and any(k in framingRaw.lower() for k in ("insert", "extreme close", "macro", "detail", "道具", "特写"))
+            )
+            if isPropInsert:
+                charsInShot = []
+            elif beatDlgs and not isMultiOrWide:
                 spkClean = str(beatDlgs[0].get("speaker") or "").lstrip("@").strip()
                 charsInShot = [spkClean] if spkClean else (rawCharsInBeat[:1] or allowedChars[:1])
+            elif isMultiOrWide and len(rawCharsInBeat) >= 2:
+                # 多人全景/阵营小组最多保留 3 名清晰主体角色，避免单帧人脸过密崩坏
+                charsInShot = rawCharsInBeat[:3]
             else:
                 charsInShot = rawCharsInBeat[:1] if rawCharsInBeat else (allowedChars[:1] if allowedChars else [])
             charKey = tuple(charsInShot)
+            isConsecutiveSameChar = bool(charKey and prevShotCharKey == charKey)
+            prevShotCharKey = charKey
             isRepeatCharInScene = bool(charKey and charKey in seenSceneCharKeys)
             if charKey:
                 seenSceneCharKeys.add(charKey)
@@ -642,9 +753,9 @@ def breakScriptIntoKeyframedShots(scriptText, projectAssets, visualStyle, llmCon
                 refs.append({"asset": f"@{cClean}", "role": "character", "description": cDescEn})
                 charPromptParts.append(f"Character {idxC + 1} ({cDescEn})")
 
-            startPoseEn = extractPureEnglishVisual(beat.get("startPoseEn") or "", eraTag) or "Character in opening pose."
-            actionEn = extractPureEnglishVisual(beat.get("actionEn") or "", eraTag) or "Executes planned dramatic action."
-            endPoseEn = extractPureEnglishVisual(beat.get("endPoseEn") or "", eraTag) or "Character completes action in final pose."
+            startPoseEn = replacePinyinNamesWithVisualAnchors(extractPureEnglishVisual(beat.get("startPoseEn") or "", eraTag), projectAssets) or "Character in opening pose."
+            actionEn = replacePinyinNamesWithVisualAnchors(extractPureEnglishVisual(beat.get("actionEn") or "", eraTag), projectAssets) or "Executes planned dramatic action."
+            endPoseEn = replacePinyinNamesWithVisualAnchors(extractPureEnglishVisual(beat.get("endPoseEn") or "", eraTag), projectAssets) or "Character completes action in final pose."
 
             # 若本镜动作并未涉及启动按钮，从局部环境描述中剥离 red start button，防止拧螺栓特写墙面上凭空画出红按钮
             shotLocDescEn = locDescEn
@@ -664,19 +775,27 @@ def breakScriptIntoKeyframedShots(scriptText, projectAssets, visualStyle, llmCon
                         propPromptParts.append(pDescEn)
 
             framing = beat.get("framing") or "Medium shot"
-            movement = beat.get("movement") or "Steady camera"
+            movement = beat.get("movement") or "Subtle handheld cinematic push-in"
+            curBucket = "closeup" if "close" in framing.lower() else ("wide" if "wide" in framing.lower() else "medium")
+            # 防同角色同景别跳切：若连续两镜为同一角色且未变景别，自动将第二镜推进为特写或标记为尾帧无缝延长
+            if isConsecutiveSameChar and curBucket == prevFramingBucket:
+                framing = "Close-up shot" if curBucket == "medium" else "Medium close-up shot"
+                curBucket = "closeup"
+            prevFramingBucket = curBucket
 
-            if len(charsInShot) == 1:
-                castCountRule = "SOLO SHOT (strictly ONLY 1 person visible in frame, no other people in background)."
+            if len(charsInShot) == 0:
+                castCountRule = "PROP INSERT / DETAIL SHOT (pure cinematic close-up focus on the key prop and textures, no full human portrait)."
+            elif len(charsInShot) == 1:
+                castCountRule = "SOLO FOCUS SHOT (1 primary character in clear focus)."
             elif len(charsInShot) == 2:
-                castCountRule = f"TWO-PERSON SHOT (exactly 2 people visible in frame). {axisEn}"
+                castCountRule = f"TWO-PERSON SPATIAL SHOT (2 characters establishing 180-degree confrontation in the same room). {axisEn}"
             else:
                 castCountRule = f"GROUP SHOT. {axisEn}"
 
             eraRealismRule = (
-                "Ancient Chinese xianxia period setting, traditional coarse cloth robes and cloth shoes, ancient stone and bronze craftsmanship (no modern boots, no modern industrial valves)."
-                if any(k in str(eraTag) for k in ("今生", "修仙", "古风", "仙侠"))
-                else "Modern industrial realistic setting."
+                "Authentic ancient Chinese historical period setting, period-accurate architecture, furniture, and traditional attire matching each character's social rank (strictly no modern clothing or modern industrial tools)."
+                if any(k in str(eraTag + " " + visualStyle) for k in ("今生", "修仙", "古风", "仙侠", "古装", "历史"))
+                else "Realistic period setting matching the script."
             )
 
             baseHeader = (
@@ -698,7 +817,8 @@ def breakScriptIntoKeyframedShots(scriptText, projectAssets, visualStyle, llmCon
                 f"{endPoseEn}. {noTextSuffix}"
             )
 
-            autoLock = 1 if (isRepeatCharInScene or int(beat.get("lockFromPrevEnd") or 0) == 1 or beat.get("continuityMode") == "continue_action") else 0
+            # 仅当紧邻上一镜就是同一角色 (isConsecutiveSameChar) 或显式指定 continue_action 时才启用尾帧无缝延长锁（纯道具特写镜不锁上一镜人物尾帧）
+            autoLock = 0 if len(charsInShot) == 0 else (1 if (isConsecutiveSameChar or int(beat.get("lockFromPrevEnd") or 0) == 1 or beat.get("continuityMode") == "continue_action") else 0)
             compiledShots.append({
                 "shotNumber": shotNum,
                 "title": f"[{sceneCode}] {beat.get('title') or f'镜头 #{shotNum}'}",
@@ -762,11 +882,12 @@ def compileAssetSheetPrompt(assetRow, visualStyle="High-end Chinese 3D CG & live
     if aType == "character":
         guardPart = f" {ancientAttireGuard}" if ancientAttireGuard else ""
         return (
-            f"Masterpiece 3D Chinese CG character reference portrait (top-tier Guoman aesthetic), {cleanStyle}. "
-            f"Solo waist-up portrait of 1 person with costume strictly matching historical identity and setting: {cleanDesc}. "
-            "Hands empty at sides (strictly NO weapons or props blocking the chest or face), natural calm expression, "
-            "refined East Asian facial proportions, natural realistic skin texture, "
-            "expressive eyes, clean neutral dark blurred background, flattering soft lighting. "
+            f"Masterpiece cinematic character reference sheet (Jimeng & Yuque production bible standard), {cleanStyle}. "
+            f"Solo waist-up front-facing portrait of 1 person with costume strictly matching historical identity and setting: {cleanDesc}. "
+            "Lips naturally closed in a composed neutral expression (strictly closed mouth baseline for clean lip-sync driving, NO open mouth, NO teeth showing), "
+            "hands empty at sides (strictly NO weapons or props blocking the chest or face), "
+            "refined East Asian facial bone structure, natural realistic skin texture, "
+            "clear expressive eyes looking forward, clean neutral dark blurred background, flattering soft studio key lighting. "
             f"Strictly NO distorted grimace.{guardPart} {noTextRule}"
         )
     if aType == "scene":
@@ -925,9 +1046,15 @@ def compileLockedKeyframePrompt(shotRow, assets, visualStyle, frameRole="first")
     if gazeLock:
         dnaBlocks.append(gazeLock)
 
-    # 动态构建高级工业防穿帮与画质增强底护（杜绝影楼摆拍、杜绝直视镜头、杜绝文字乱码）
+    # 动态构建即梦/语雀级防穿帮与对口型闭嘴基准护栏（首帧强制自然合唇防止对口型面部崩坏、杜绝影楼摆拍、杜绝文字乱码）
+    lipBaselineRule = (
+        "Lips naturally closed or gently poised before speaking (strictly NO wide-open shouting mouth or distorted teeth in the starting keyframe so downstream lip-sync animation stays clean). "
+        if frameRole == "first"
+        else ""
+    )
     dnaBlocks.append(
-        "Cinematic narrative realism, authentic textured fabrics with realistic wrinkles and wear, subtle breath vapor in cold air, natural volumetric lighting, "
+        lipBaselineRule
+        + "Cinematic narrative realism, authentic textured fabrics with realistic wrinkles and wear, subtle breath vapor in cold air, natural volumetric lighting, "
         "strictly candid cinematic still, strictly NO direct camera stare, NO smiling at lens, NO glamour beauty filter, NO effeminate fashion model posing, "
         "strictly NO modern tools, NO open-end wrenches or spanners, NO glowing hands, "
         "strictly NO text, NO Chinese characters, NO signboards, NO nameplates, NO helmet labels, NO watermarks."
