@@ -844,6 +844,30 @@ function renderShotCards(shots, tasks = [], assets = []) {
             .join("")
         : `<span style="color:var(--text-muted);">未绑定特定资产</span>`;
 
+      const allCands = Array.isArray(s.candidates) ? s.candidates : [];
+      const vidCands = allCands.filter((c) => c.candidateType === "video");
+      const kfCands = allCands.filter((c) => c.candidateType === "first_frame");
+      const vidCandPills = vidCands.length > 0
+        ? `<div style="display:flex; flex-wrap:wrap; align-items:center; gap:4px; margin-top:4px;">
+            <span style="font-size:10.5px; color:var(--text-muted);">🎰 视频抽卡池：</span>
+            ${vidCands.map((c, idxV) => {
+              const isCur = c.mediaUrl === s.videoUrl;
+              return `<button class="btn btnSmall" style="padding:2px 7px; font-size:10.5px; ${isCur ? "background:var(--emerald-ok);color:#04110b;font-weight:700;" : ""}" onclick="selectShotCandidate(${s.id}, ${c.id})">V${vidCands.length - idxV}${isCur ? " ✓" : ""}</button>`;
+            }).join("")}
+          </div>`
+        : "";
+      const kfCandPills = kfCands.length > 1
+        ? `<div style="display:flex; flex-wrap:wrap; align-items:center; gap:4px; margin-top:4px;">
+            <span style="font-size:10.5px; color:var(--text-muted);">🖼️ 首帧抽卡池：</span>
+            ${kfCands.map((c, idxK) => {
+              const isCur = c.mediaUrl === s.firstFrameUrl;
+              return `<button class="btn btnSmall" style="padding:2px 7px; font-size:10.5px; ${isCur ? "background:var(--cyan-monitor);color:#04110b;font-weight:700;" : ""}" onclick="selectShotCandidate(${s.id}, ${c.id})">图${kfCands.length - idxK}${isCur ? " ✓" : ""}</button>`;
+            }).join("")}
+          </div>`
+        : "";
+      const trimStartVal = Number(s.clipStartSec || 0);
+      const trimEndVal = Number(s.clipEndSec || 0);
+
       const qc = s.qcReport || {};
       const qcBadge = s.videoUrl && qc.grade
         ? `<span class="eraBadge" style="background:rgba(245,158,11,0.18);color:var(--amber-gold);" title="分辨率: ${qc.width || 0}x${qc.height || 0} | 响度: ${qc.meanVolumeDb ?? '-'}dB">QC:${escapeHtml(qc.grade)} · ${qc.width || 2016}P</span>`
@@ -914,6 +938,7 @@ function renderShotCards(shots, tasks = [], assets = []) {
                     : ""
                 }
               </div>
+              ${kfCandPills}
             </div>
 
             <!-- 中栏：本镜剧情、动作与角色台词 -->
@@ -947,7 +972,15 @@ function renderShotCards(shots, tasks = [], assets = []) {
                 }
               </div>
               <div class="mediaViewport">${videoHtml}</div>
-              <div style="font-size:11.5px; color:var(--text-secondary);">
+              ${vidCandPills}
+              <div style="display:flex; align-items:center; gap:6px; margin-top:6px; font-size:11px; color:var(--text-secondary);">
+                <span>✂️ 精华裁切(秒):</span>
+                <input id="trim-start-${s.id}" type="number" step="0.1" min="0" value="${trimStartVal}" style="width:54px; padding:2px 4px; background:var(--bg-surface); color:var(--text-primary); border:1px solid var(--border-subtle); border-radius:4px;" />
+                <span>~</span>
+                <input id="trim-end-${s.id}" type="number" step="0.1" min="0" value="${trimEndVal}" style="width:54px; padding:2px 4px; background:var(--bg-surface); color:var(--text-primary); border:1px solid var(--border-subtle); border-radius:4px;" />
+                <button class="btn btnSmall" style="padding:2px 7px; font-size:10.5px;" onclick="saveShotTrimWindow(${s.id})" title="设置合成母带时仅截取本镜最精华片段（填0~0恢复智能自动裁剪）">保存裁切</button>
+              </div>
+              <div style="font-size:11.5px; color:var(--text-secondary); margin-top:4px;">
                 🔊 <strong>环境音效：</strong>${escapeHtml((s.soundscapePrompt || "自然环境声效").slice(0, 72))}
               </div>
             </div>
@@ -1135,6 +1168,36 @@ async function triggerShotVideo(shotId) {
     await loadWorkspace(currentState.activeProjectId, currentState.activeEpisodeId);
   } catch (err) {
     showToast(`提交镜头视频渲染失败: ${err.message}`, "error");
+  }
+}
+
+async function selectShotCandidate(shotId, candidateId) {
+  try {
+    await apiFetch(`/api/shots/${shotId}/selectCandidate`, {
+      method: "POST",
+      body: JSON.stringify({ candidateId }),
+    });
+    showToast("已切换选中该抽卡版本");
+    await refreshWorkspace(true);
+  } catch (err) {
+    showToast("切换版本失败: " + err.message, true);
+  }
+}
+
+async function saveShotTrimWindow(shotId) {
+  const sEl = document.getElementById(`trim-start-${shotId}`);
+  const eEl = document.getElementById(`trim-end-${shotId}`);
+  const clipStartSec = parseFloat(sEl ? sEl.value : "0") || 0;
+  const clipEndSec = parseFloat(eEl ? eEl.value : "0") || 0;
+  try {
+    await apiFetch(`/api/shots/${shotId}/trimWindow`, {
+      method: "POST",
+      body: JSON.stringify({ clipStartSec, clipEndSec }),
+    });
+    showToast(clipEndSec > clipStartSec ? `已锁定精华裁切区间 ${clipStartSec}s ~ ${clipEndSec}s` : "已恢复智能自动裁剪");
+    await refreshWorkspace(true);
+  } catch (err) {
+    showToast("保存裁切失败: " + err.message, true);
   }
 }
 

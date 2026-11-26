@@ -25,7 +25,7 @@ import urllib.error
 from pathlib import Path
 from contextlib import closing
 
-from .studioStore import getDbConnection, KEYFRAMES_DIR, VIDEOS_DIR, ASSETS_DIR
+from .studioStore import getDbConnection, KEYFRAMES_DIR, VIDEOS_DIR, ASSETS_DIR, recordShotCandidate
 from .directorPlanner import (
     compileFl2vaVideoPrompt,
     compileWan22VideoPrompt,
@@ -1500,6 +1500,12 @@ def enqueueKeyframeTask(shotId, frameRole="both", forceRegenerate=True):
                         (modeNote, lastUrl or firstUrl, time.time(), taskId),
                     )
                     conn.commit()
+                if shotRow.get("firstFrameUrl"):
+                    recordShotCandidate(shotId, "first_frame", shotRow.get("firstFrameUrl"), note="历史首帧")
+                if firstUrl:
+                    recordShotCandidate(shotId, "first_frame", firstUrl, note="首帧抽卡")
+                if lastUrl:
+                    recordShotCandidate(shotId, "last_frame", lastUrl, note="尾帧抽卡")
 
                 # 如果本镜生成了新的尾帧，自动向后传递帧锁给下一镜首帧
                 syncEpisodeFrameLocks(shotRow["episodeId"])
@@ -1800,12 +1806,16 @@ def enqueueShotVideoTask(shotId, engineOverride=None):
                 qcReport["usedFirstFrame"] = firstUrl
                 qcReport["usedLastFrame"] = lastUrl if shotRow.get("shotCategory") == "action_fl2va" else ""
 
+                qcJsonStr = json.dumps(qcReport, ensure_ascii=False)
                 with closing(getDbConnection()) as conn:
                     conn.execute(
                         "UPDATE shots SET videoUrl=?, qcReportJson=?, updatedAt=? WHERE id=?",
-                        (videoUrl, json.dumps(qcReport, ensure_ascii=False), time.time(), shotId),
+                        (videoUrl, qcJsonStr, time.time(), shotId),
                     )
                     conn.commit()
+                if shotRow.get("videoUrl"):
+                    recordShotCandidate(shotId, "video", shotRow.get("videoUrl"), engineName=shotRow.get("videoEngine", ""), qcReportJson=shotRow.get("qcReportJson", "{}"), note="历史视频")
+                recordShotCandidate(shotId, "video", videoUrl, engineName=engine, qcReportJson=qcJsonStr, note="视频抽卡")
 
                 # 4. 自动提取角色黄金声纹入库锁定（若该角色首次开口），并提取视频末尾帧更新帧锁
                 try:

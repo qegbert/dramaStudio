@@ -202,6 +202,13 @@ class StudioRequestHandler(BaseHTTPRequestHandler):
                             s["references"] = json.loads(s.get("referenceAssetsJson") or "[]")
                             s["checks"] = json.loads(s.get("checksJson") or "[]")
                             s["qcReport"] = json.loads(s.get("qcReportJson") or "{}")
+                            s["candidates"] = [
+                                dict(c)
+                                for c in conn.execute(
+                                    "SELECT * FROM shotCandidates WHERE shotId=? ORDER BY createdAt DESC, id DESC",
+                                    (s["id"],),
+                                )
+                            ]
                             lockedKfPreview = compileLockedKeyframePrompt(s, assets, proj["visualStyle"], frameRole="first")
                             vidPreview = (
                                 compileWan22VideoPrompt(s)
@@ -526,6 +533,8 @@ class StudioRequestHandler(BaseHTTPRequestHandler):
                         "actionArcPrompt": body.get("actionArcPrompt", shot["actionArcPrompt"]),
                         "lastFramePrompt": body.get("lastFramePrompt", shot["lastFramePrompt"]),
                         "soundscapePrompt": body.get("soundscapePrompt", shot["soundscapePrompt"]),
+                        "clipStartSec": float(body.get("clipStartSec", shot["clipStartSec"] or 0.0)),
+                        "clipEndSec": float(body.get("clipEndSec", shot["clipEndSec"] or 0.0)),
                         "dialogueJson": json.dumps(body["dialogue"], ensure_ascii=False) if "dialogue" in body else shot["dialogueJson"],
                         "updatedAt": now,
                     }
@@ -555,6 +564,43 @@ class StudioRequestHandler(BaseHTTPRequestHandler):
                 shotId = int(mExtractLast.group(1))
                 lastUrl = extractHighResLastFrameFromVideo(shotId)
                 return self.sendJson({"ok": True, "lastFrameUrl": lastUrl})
+
+            mSelectCand = re.match(r"^/api/shots/(\d+)/selectCandidate$", path)
+            if mSelectCand:
+                shotId = int(mSelectCand.group(1))
+                candId = int(body.get("candidateId") or 0)
+                with closing(getDbConnection()) as conn:
+                    cand = conn.execute("SELECT * FROM shotCandidates WHERE id=? AND shotId=?", (candId, shotId)).fetchone()
+                    if not cand:
+                        return self.sendJson({"error": "候选版本不存在"}, 404)
+                    cType = cand["candidateType"]
+                    now = time.time()
+                    if cType == "video":
+                        conn.execute(
+                            "UPDATE shots SET videoUrl=?, qcReportJson=?, status='completed', updatedAt=? WHERE id=?",
+                            (cand["mediaUrl"], cand["qcReportJson"] or "{}", now, shotId),
+                        )
+                    elif cType == "first_frame":
+                        conn.execute("UPDATE shots SET firstFrameUrl=?, updatedAt=? WHERE id=?", (cand["mediaUrl"], now, shotId))
+                    elif cType == "last_frame":
+                        conn.execute("UPDATE shots SET lastFrameUrl=?, updatedAt=? WHERE id=?", (cand["mediaUrl"], now, shotId))
+                    conn.commit()
+                return self.sendJson({"ok": True, "candidateType": cType, "mediaUrl": cand["mediaUrl"]})
+
+            mTrimWin = re.match(r"^/api/shots/(\d+)/trimWindow$", path)
+            if mTrimWin:
+                shotId = int(mTrimWin.group(1))
+                startSec = max(0.0, float(body.get("clipStartSec") or 0.0))
+                endSec = max(0.0, float(body.get("clipEndSec") or 0.0))
+                if endSec > 0 and endSec <= startSec:
+                    return self.sendJson({"error": "结束秒数必须大于起始秒数"}, 400)
+                with closing(getDbConnection()) as conn:
+                    conn.execute(
+                        "UPDATE shots SET clipStartSec=?, clipEndSec=?, updatedAt=? WHERE id=?",
+                        (round(startSec, 2), round(endSec, 2), time.time(), shotId),
+                    )
+                    conn.commit()
+                return self.sendJson({"ok": True, "clipStartSec": round(startSec, 2), "clipEndSec": round(endSec, 2)})
 
             mSyncLocks = re.match(r"^/api/episodes/(\d+)/syncFrameLocks$", path)
             if mSyncLocks:

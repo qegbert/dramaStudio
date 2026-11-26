@@ -140,6 +140,18 @@ def initDatabase():
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS shotCandidates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                shotId INTEGER NOT NULL,
+                candidateType TEXT NOT NULL, -- 'video' | 'first_frame' | 'last_frame'
+                mediaUrl TEXT NOT NULL,
+                engineName TEXT DEFAULT '',
+                qcReportJson TEXT DEFAULT '{}',
+                note TEXT DEFAULT '',
+                createdAt REAL NOT NULL,
+                FOREIGN KEY(shotId) REFERENCES shots(id) ON DELETE CASCADE
+            );
             """
         )
         # 写入默认配置
@@ -166,6 +178,10 @@ def initDatabase():
             conn.execute("ALTER TABLE shots ADD COLUMN ttsAudioUrl TEXT DEFAULT ''")
         if "ttsDurationSec" not in shotCols:
             conn.execute("ALTER TABLE shots ADD COLUMN ttsDurationSec REAL DEFAULT 0")
+        if "clipStartSec" not in shotCols:
+            conn.execute("ALTER TABLE shots ADD COLUMN clipStartSec REAL DEFAULT 0")
+        if "clipEndSec" not in shotCols:
+            conn.execute("ALTER TABLE shots ADD COLUMN clipEndSec REAL DEFAULT 0")
         for k, v in defaults.items():
             conn.execute(
                 "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
@@ -196,6 +212,30 @@ def initDatabase():
         if "sceneLedgerJson" not in epCols:
             conn.execute("ALTER TABLE episodes ADD COLUMN sceneLedgerJson TEXT DEFAULT '[]'")
         conn.commit()
+
+
+def recordShotCandidate(shotId, candidateType, mediaUrl, engineName="", qcReportJson="{}", note=""):
+    """将单镜生成的视频/关键帧结果存入抽卡历史池（自动去重），支持多版对比与一键回退"""
+    cleanUrl = str(mediaUrl or "").strip()
+    if not shotId or not cleanUrl:
+        return None
+    now = time.time()
+    with closing(getDbConnection()) as conn:
+        exists = conn.execute(
+            "SELECT id FROM shotCandidates WHERE shotId=? AND candidateType=? AND mediaUrl=?",
+            (shotId, candidateType, cleanUrl),
+        ).fetchone()
+        if exists:
+            return exists["id"]
+        cur = conn.execute(
+            """
+            INSERT INTO shotCandidates (shotId, candidateType, mediaUrl, engineName, qcReportJson, note, createdAt)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (shotId, candidateType, cleanUrl, str(engineName or ""), str(qcReportJson or "{}"), str(note or ""), now),
+        )
+        conn.commit()
+        return cur.lastrowid
 
 
 def upsertExtractedAssets(projectId, extractedList):

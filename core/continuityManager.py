@@ -531,13 +531,19 @@ def mergeEpisodeMasterVideo(episodeId):
             nextCharKey = _extractShotCharacterKey(validShots[idx + 1][0]) if idx + 1 < len(validShots) else ()
             isSeamlessIn = bool(int(sDict.get("lockFromPrevEnd") or 0) == 1 or (prevCharKey and curCharKey == prevCharKey))
             isSeamlessOut = bool(nextCharKey and curCharKey == nextCharKey)
-            trimStart, trimDur = _detectSmartTrimWindow(
-                clipPath,
-                fallbackDuration=sDict.get("durationSec", 5.0),
-                hasDialogue=hasDlg,
-                isSeamlessContinuation=isSeamlessIn,
-                leadsIntoSeamlessContinuation=isSeamlessOut,
-            )
+            manualStart = float(sDict.get("clipStartSec") or 0.0)
+            manualEnd = float(sDict.get("clipEndSec") or 0.0)
+            if manualEnd > manualStart >= 0.0:
+                trimStart = round(manualStart, 2)
+                trimDur = round(max(0.5, manualEnd - manualStart), 2)
+            else:
+                trimStart, trimDur = _detectSmartTrimWindow(
+                    clipPath,
+                    fallbackDuration=sDict.get("durationSec", 5.0),
+                    hasDialogue=hasDlg,
+                    isSeamlessContinuation=isSeamlessIn,
+                    leadsIntoSeamlessContinuation=isSeamlessOut,
+                )
 
             # 真 L-Cut 电影声画错位：当本镜有台词且下一镜是无台词反应/道具特写镜，且非同角色无缝延长时，
             # 画面提前 0.85s 切进下一镜反应/特写，但本镜音频仍完整播完（声音跨镜铺在下一镜开头），彻底消灭 PPT 拼接感！
