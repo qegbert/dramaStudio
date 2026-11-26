@@ -207,10 +207,14 @@ def initDatabase():
             """,
             (nowTs,),
         )
-        # 兼容已有数据库平滑增加 sceneLedgerJson 字段
+        # 兼容已有数据库平滑增加 sceneLedgerJson 与专属配乐 bgmAudioUrl 字段
         epCols = [r[1] for r in conn.execute("PRAGMA table_info(episodes)").fetchall()]
         if "sceneLedgerJson" not in epCols:
             conn.execute("ALTER TABLE episodes ADD COLUMN sceneLedgerJson TEXT DEFAULT '[]'")
+        if "bgmAudioUrl" not in epCols:
+            conn.execute("ALTER TABLE episodes ADD COLUMN bgmAudioUrl TEXT DEFAULT ''")
+        if "bgmPrompt" not in epCols:
+            conn.execute("ALTER TABLE episodes ADD COLUMN bgmPrompt TEXT DEFAULT ''")
         conn.commit()
 
 

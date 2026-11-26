@@ -303,6 +303,13 @@ class StudioRequestHandler(BaseHTTPRequestHandler):
                 result = synthesizeEpisodeDialogues(episodeId, forceRegenerate=forceRegen)
                 return self.sendJson({"ok": True, **result})
 
+            mGenBgm = re.match(r"^/api/episodes/(\d+)/generateBgm$", path)
+            if mGenBgm:
+                episodeId = int(mGenBgm.group(1))
+                from core.audioScoreEngine import generateEpisodeBgmWithCloud
+                result = generateEpisodeBgmWithCloud(episodeId)
+                return self.sendJson(result)
+
             mSynShot = re.match(r"^/api/shots/(\d+)/synthesizeAudio$", path)
             if mSynShot:
                 shotId = int(mSynShot.group(1))

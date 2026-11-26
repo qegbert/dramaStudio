@@ -671,9 +671,30 @@ def mergeEpisodeMasterVideo(episodeId):
                 )
 
         totalVideoDur = sum(t["trimmedDurationSec"] for t in timelineManifest)
-        bgmCandidate = DATA_DIR.parent.parent / "bgm_ambient.wav"
+        from .audioScoreEngine import buildEpisodeSfxStem
+        sfxStemWav = normDir / "sfx_stem.wav"
+        sfxCount = buildEpisodeSfxStem(timelineManifest, validShots, totalVideoDur, sfxStemWav, ffmpegBin=ffmpegBin)
+
+        # 优先使用本集云端生成的专属配乐，否则回退内置古风氛围底乐
+        epBgmPath = resolveMediaUrlToPath(episode["bgmAudioUrl"]) if episode["bgmAudioUrl"] else None
+        bgmCandidate = epBgmPath if (epBgmPath and epBgmPath.exists()) else (DATA_DIR.parent.parent / "bgm_ambient.wav")
         finalAudioWav = normDir / "final_master_audio.wav"
-        if bgmCandidate.exists():
+        if bgmCandidate.exists() and sfxCount > 0 and sfxStemWav.exists():
+            # 三轨商业短剧混音：对白主轨 + 动作/转场拟音踩点 SFX + 氛围 BGM（人声优先清晰，响度 -14 LUFS）
+            mixCmd = [
+                ffmpegBin, "-v", "error", "-y",
+                "-i", str(dialogueStemWav),
+                "-i", str(sfxStemWav),
+                "-stream_loop", "-1", "-t", str(round(totalVideoDur + 1.0, 2)), "-i", str(bgmCandidate),
+                "-filter_complex",
+                f"[2:a]lowpass=f=3200,volume=0.15,afade=t=in:st=0:d=1.2,afade=t=out:st={max(0.5, totalVideoDur-1.8):.2f}:d=1.8[bgm];"
+                "[0:a][1:a][bgm]amix=inputs=3:duration=first:dropout_transition=0:normalize=0,loudnorm=I=-14:TP=-1.2:LRA=9[aout]",
+                "-map", "[aout]", "-ar", "44100", "-ac", "2", str(finalAudioWav),
+            ]
+            mRes = subprocess.run(mixCmd, capture_output=True, text=True, timeout=90)
+            if mRes.returncode != 0 or not finalAudioWav.exists():
+                shutil.copy2(str(dialogueStemWav), str(finalAudioWav))
+        elif bgmCandidate.exists():
             # 使用贯穿全集的古风氛围底乐 + 连续环境底音，人声出现时自动柔和衬底，彻底消除镜头切换时的声场断层
             mixCmd = [
                 ffmpegBin, "-v", "error", "-y",
@@ -682,6 +703,18 @@ def mergeEpisodeMasterVideo(episodeId):
                 "-filter_complex",
                 f"[1:a]lowpass=f=3200,volume=0.16,afade=t=in:st=0:d=1.2,afade=t=out:st={max(0.5, totalVideoDur-1.8):.2f}:d=1.8[bgm];"
                 "[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=0,loudnorm=I=-15:TP=-1.2:LRA=9[aout]",
+                "-map", "[aout]", "-ar", "44100", "-ac", "2", str(finalAudioWav),
+            ]
+            mRes = subprocess.run(mixCmd, capture_output=True, text=True, timeout=90)
+            if mRes.returncode != 0 or not finalAudioWav.exists():
+                shutil.copy2(str(dialogueStemWav), str(finalAudioWav))
+        elif sfxCount > 0 and sfxStemWav.exists():
+            mixCmd = [
+                ffmpegBin, "-v", "error", "-y",
+                "-i", str(dialogueStemWav),
+                "-i", str(sfxStemWav),
+                "-filter_complex",
+                "[0:a][1:a]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,loudnorm=I=-14:TP=-1.2:LRA=9[aout]",
                 "-map", "[aout]", "-ar", "44100", "-ac", "2", str(finalAudioWav),
             ]
             mRes = subprocess.run(mixCmd, capture_output=True, text=True, timeout=90)
@@ -730,5 +763,6 @@ def mergeEpisodeMasterVideo(episodeId):
             "masterVideoUrl": masterUrl,
             "timelineUrl": f"/media/exports/{manifestName}",
             "clipCount": len(validShots),
+            "sfxCount": sfxCount,
             "totalDurationSec": round(totalVideoDur, 2),
         }
