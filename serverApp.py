@@ -206,7 +206,7 @@ class StudioRequestHandler(BaseHTTPRequestHandler):
                             vidPreview = (
                                 compileWan22VideoPrompt(s)
                                 if s.get("videoEngine") == "wan22_moe"
-                                else compileFl2vaVideoPrompt(s, hasLastFrame=(s.get("shotCategory") == "action_fl2va"))
+                                else compileFl2vaVideoPrompt(s, hasLastFrame=(s.get("shotCategory") == "action_fl2va"), visualStyle=proj["visualStyle"])
                             )
                             s["compiledPreview"] = f"=== [1] 已注入角色/场景DNA的首帧生成指令 ===\n{lockedKfPreview}\n\n=== [2] 底层视频扩散模型渲染指令 ===\n{vidPreview}"
                             shots.append(s)

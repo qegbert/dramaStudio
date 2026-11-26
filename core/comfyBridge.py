@@ -15,6 +15,7 @@ import os
 import time
 import json
 import uuid
+import shutil
 import random
 import threading
 import subprocess
@@ -585,9 +586,9 @@ def buildH3AudioDrivenWorkflow(
         "7_drv": {"class_type": "LoadAudio", "inputs": {"audio": driveAudioUploadedName}},
     }
 
-    # 音频锁声驱动模式下，显式声明 <Audio 1> 作为原声驱动源，同时去除可能冲突的即兴台词要求
+    # 音频锁声驱动模式下，通过 lock_source 直接锁死驱动音轨 latent，并关闭 add_source_as_reference 避免触发已禁用的 Hybrid 路径
     drivenPrompt = (
-        f"Synchronize the speaker's lip movements, jaw motion, breathing and subtle facial micro-expressions strictly to <Audio 1>. "
+        f"Synchronize the speaker's lip movements, jaw motion, breathing and subtle facial micro-expressions strictly to the locked source dialogue audio track. "
         f"{promptText}"
     )
 
@@ -599,11 +600,11 @@ def buildH3AudioDrivenWorkflow(
         "width": width,
         "height": height,
         "length": length,
-        "task_type": "Ref2VA" if useRef2vaBase else "FL2VA",
+        "task_type": "auto",
         "audio_mode": "lock_source",
         "audio_denoise_strength": 0.0,
-        "add_source_as_reference": True,
-        "prompt_primary_audio_ordinal": 1,
+        "add_source_as_reference": False,
+        "prompt_primary_audio_ordinal": 0,
         "strict_prompt_tags": False,
         "ref_image_size": "match",
         "reference_video_policy": "official_2_to_15s",
@@ -1175,10 +1176,74 @@ def _collectShotCharacterRefUploads(shotRow, projectAssets, comfyEndpoint):
             propUploads.append(upName)
 
     omniList = []
-    for item in charUploads[:3] + sceneUploads[:1] + propUploads[:2]:
+    for item in charUploads[:3] + propUploads[:2] + sceneUploads[:1]:
         if item not in omniList:
             omniList.append(item)
     return omniList[:6]
+
+
+def _findScenePlateUpload(shotRow, projectAssets, comfyEndpoint):
+    """提取本镜绑定的场景空镜底图并上传，作为生图 <Picture 1> 空间底板（不占角色参考图名额）"""
+    assetMap = {str(a.get("name", "")).lstrip("@").strip(): a for a in (projectAssets or [])}
+    try:
+        refs = json.loads(shotRow.get("referenceAssetsJson") or "[]")
+    except Exception:
+        refs = []
+    for r in refs:
+        if not isinstance(r, dict) or r.get("role") != "scene":
+            continue
+        aName = str(r.get("asset", "")).lstrip("@").strip()
+        aObj = assetMap.get(aName)
+        if not aObj or not aObj.get("imageUrl"):
+            continue
+        localPath = resolveMediaUrlToPath(aObj["imageUrl"])
+        if localPath and localPath.exists():
+            try:
+                return uploadImageToComfy(localPath, comfyEndpoint)
+            except Exception:
+                continue
+    return None
+
+
+def ensureShotAssetsHaveImages(shotRow, projectAssets, visualStyle, comfyEndpoint):
+    """
+    自动补全机制：生分镜前若发现本镜引用的场景/道具/角色尚未生成定妆设定图（imageUrl 为空），
+    先自动在云端生成并入库锁定，彻底杜绝“带着空场景/空道具母板硬生分镜导致每镜背景乱跳”。
+    """
+    assetMap = {str(a.get("name", "")).lstrip("@").strip(): a for a in (projectAssets or [])}
+    try:
+        refs = json.loads(shotRow.get("referenceAssetsJson") or "[]")
+    except Exception:
+        refs = []
+    updated = False
+    for r in refs:
+        if not isinstance(r, dict):
+            continue
+        aName = str(r.get("asset", "")).lstrip("@").strip()
+        aObj = assetMap.get(aName)
+        if not aObj or str(aObj.get("imageUrl") or "").strip():
+            continue
+        try:
+            promptText = compileAssetSheetPrompt(aObj, visualStyle=visualStyle or "3D国漫电影级写实质感")
+            aType = aObj.get("assetType") or "character"
+            w, h = (1024, 1024) if aType != "scene" else (1280, 720)
+            wf = buildKeyframeWorkflow(promptText, width=w, height=h, seed=random.randint(1, 2147483647))
+            _, _, kfPath = _submitAndPollComfyWorkflow(wf, comfyEndpoint, expectedType="image")
+            localName = f"asset_ref_{aObj['id']}_{int(time.time()*1000)}.png"
+            assetDest = ASSETS_DIR / localName
+            shutil.copy2(str(kfPath), str(assetDest))
+            imgUrl = f"/media/assets/{localName}"
+            with closing(getDbConnection()) as conn:
+                conn.execute("UPDATE assets SET imageUrl=?, updatedAt=? WHERE id=?", (imgUrl, time.time(), aObj["id"]))
+                conn.commit()
+            aObj["imageUrl"] = imgUrl
+            updated = True
+        except Exception as assetErr:
+            print(f"[comfyBridge] 自动补全资产 @{aName} 设定图失败: {assetErr}")
+    if updated:
+        with closing(getDbConnection()) as conn:
+            return [dict(a) for a in conn.execute("SELECT * FROM assets WHERE projectId=?", (shotRow["projectId"],))]
+    return projectAssets
 
 
 def _collectShotVoiceRefUpload(shotRow, projectAssets, comfyEndpoint):
@@ -1371,6 +1436,7 @@ def enqueueKeyframeTask(shotId, frameRole="both", forceRegenerate=True):
                     raise RuntimeError(f"云端 ComfyUI 算力服务未在线 ({comfyStatus.get('endpoint')})，已拒绝生成本地假关键帧")
 
                 epUrl = comfyStatus["endpoint"]
+                projectAssets = ensureShotAssetsHaveImages(shotRow, projectAssets, projRow.get("visualStyle", ""), epUrl)
                 charRefUploads = _collectShotCharacterRefUploads(shotRow, projectAssets, epUrl)
                 if comfyStatus.get("is24GbCard"):
                     charRefUploads = charRefUploads[:2]
@@ -1378,20 +1444,27 @@ def enqueueKeyframeTask(shotId, frameRole="both", forceRegenerate=True):
 
                 if needFirst:
                     rigMasterPlate = _findSameSceneCameraRigMasterPlate(shotRow, epUrl)
-                    firstPromptForRender = (
-                        f"Keep the exact same camera angle, room architecture, background props, lighting and character identity from <Picture 1>, "
-                        f"update the character's acting expression and gesture for this shot: {lockedFirstPrompt}"
-                        if rigMasterPlate
-                        else lockedFirstPrompt
-                    )
+                    scenePlate = None if rigMasterPlate else _findScenePlateUpload(shotRow, projectAssets, epUrl)
+                    basePlate = rigMasterPlate or scenePlate
+                    if rigMasterPlate:
+                        firstPromptForRender = (
+                            f"Keep the exact same camera angle, room architecture, background props, lighting and character identity from <Picture 1>, "
+                            f"update the character's acting expression and gesture for this shot: {lockedFirstPrompt}"
+                        )
+                    elif scenePlate:
+                        firstPromptForRender = (
+                            f"Place the characters strictly inside the exact room architecture, furniture, candle lighting and dark mood of <Picture 1>: {lockedFirstPrompt}"
+                        )
+                    else:
+                        firstPromptForRender = lockedFirstPrompt
                     wf1 = buildKeyframeWorkflow(
                         firstPromptForRender,
                         width=width,
                         height=height,
                         seed=sharedSeed,
-                        sourceImageUploadedName=rigMasterPlate,
+                        sourceImageUploadedName=basePlate,
                         referenceUploadedNames=charRefUploads,
-                        sourceFidelity=0.78 if rigMasterPlate else 0.65,
+                        sourceFidelity=0.78 if rigMasterPlate else (0.50 if scenePlate else 0.65),
                     )
                     _, firstUrl, firstPathLocal = _submitAndPollComfyWorkflow(wf1, epUrl, expectedType="image")
 
@@ -1533,26 +1606,34 @@ def enqueueShotVideoTask(shotId, engineOverride=None):
                 if firstUrl and any(oldTag in firstUrl for oldTag in ("_1793949", "_1793950", "_179436178")):
                     firstUrl = ""
                     lastUrl = ""
+                projectAssets = ensureShotAssetsHaveImages(shotRow, projectAssets, projRow.get("visualStyle", ""), comfyStatus["endpoint"])
                 charRefUploads = _collectShotCharacterRefUploads(shotRow, projectAssets, comfyStatus["endpoint"])
                 voiceRefUpload = _collectShotVoiceRefUpload(shotRow, projectAssets, comfyStatus["endpoint"])
                 sharedKfSeed = random.randint(1, 2147483647)
                 if not firstUrl:
                     rigMasterPlate = _findSameSceneCameraRigMasterPlate(shotRow, comfyStatus["endpoint"])
+                    scenePlate = None if rigMasterPlate else _findScenePlateUpload(shotRow, projectAssets, comfyStatus["endpoint"])
+                    basePlate = rigMasterPlate or scenePlate
                     lockedFirst = compileLockedKeyframePrompt(shotRow, projectAssets, projRow.get("visualStyle", ""), frameRole="first")
-                    firstPromptForRender = (
-                        f"Keep the exact same camera angle, room architecture, background props, lighting and character identity from <Picture 1>, "
-                        f"update the character's acting expression and gesture for this shot: {lockedFirst}"
-                        if rigMasterPlate
-                        else lockedFirst
-                    )
+                    if rigMasterPlate:
+                        firstPromptForRender = (
+                            f"Keep the exact same camera angle, room architecture, background props, lighting and character identity from <Picture 1>, "
+                            f"update the character's acting expression and gesture for this shot: {lockedFirst}"
+                        )
+                    elif scenePlate:
+                        firstPromptForRender = (
+                            f"Place the characters strictly inside the exact room architecture, furniture, candle lighting and dark mood of <Picture 1>: {lockedFirst}"
+                        )
+                    else:
+                        firstPromptForRender = lockedFirst
                     wfFirst = buildKeyframeWorkflow(
                         firstPromptForRender,
                         width=vWidth,
                         height=vHeight,
                         seed=sharedKfSeed,
-                        sourceImageUploadedName=rigMasterPlate,
-                        referenceUploadedNames=charRefUploads,
-                        sourceFidelity=0.78 if rigMasterPlate else 0.65,
+                        sourceImageUploadedName=basePlate,
+                        referenceUploadedNames=charRefUploads[:2] if is24Gb else charRefUploads,
+                        sourceFidelity=0.78 if rigMasterPlate else (0.50 if scenePlate else 0.65),
                     )
                     _, firstUrl, _ = _submitAndPollComfyWorkflow(wfFirst, comfyStatus["endpoint"], expectedType="image")
 
@@ -1606,8 +1687,26 @@ def enqueueShotVideoTask(shotId, engineOverride=None):
                 steps = max(4, int(getSettingValue("h3SamplingSteps", "16") or 16))
                 frameLength = calculateH3FrameGrid(shotRow.get("durationSec", 5.0))
                 if is24Gb:
-                    # 896x512 画幅像素面积仅占 1344x768 的 44%，24GB 卡可安全跑 107~124 帧 (4.5~5.17s)，确保长句台词从容说完不腰斩
-                    frameLength = min(124, max(107, frameLength))
+                    # 24GB 卡提交视频前主动调用 ComfyUI /free 清理上一镜残留的 PyTorch 显存碎片，杜绝连续长镜 OOM
+                    try:
+                        freeReq = urllib.request.Request(
+                            f"{comfyStatus['endpoint'].rstrip('/')}/free",
+                            data=json.dumps({"unload_models": True, "free_memory": True}).encode("utf-8"),
+                            headers={"Content-Type": "application/json"},
+                            method="POST",
+                        )
+                        with _DIRECT_HTTP_OPENER.open(freeReq, timeout=15):
+                            pass
+                    except Exception:
+                        pass
+                    # 896x512 画幅下：有外部精确配音驱动时收敛至 141 帧 (5.88s) 并用 PDD 8 步 euler 省下 res_multistep 2.5GB 缓存，确保 24GB 卡 100% 不 OOM 且提速 2 倍
+                    if driveAudioUploaded:
+                        frameLength = min(141, max(73, frameLength))
+                        if frameLength >= 124:
+                            steps = min(steps, 8)
+                    else:
+                        frameLength = min(124, max(73, frameLength))
+                        steps = min(steps, 8)
                     charRefUploads = charRefUploads[:2]
 
                 upFirst = uploadImageToComfy(firstPath, comfyStatus["endpoint"])
@@ -1626,6 +1725,7 @@ def enqueueShotVideoTask(shotId, engineOverride=None):
                     )
                     conn.commit()
 
+                pStyle = projRow.get("visualStyle", "")
                 if engine == "wan22_moe":
                     compiledPrompt = compileWan22VideoPrompt(shotRow)
                     wfVideo = buildWan22MoeWorkflow(
@@ -1637,7 +1737,7 @@ def enqueueShotVideoTask(shotId, engineOverride=None):
                         steps=20,
                     )
                 elif driveAudioUploaded:
-                    compiledPrompt = compileFl2vaVideoPrompt(shotRow, hasLastFrame=bool(upLast))
+                    compiledPrompt = compileFl2vaVideoPrompt(shotRow, hasLastFrame=bool(upLast), visualStyle=pStyle)
                     wfVideo = buildH3AudioDrivenWorkflow(
                         compiledPrompt,
                         upFirst,
@@ -1652,7 +1752,7 @@ def enqueueShotVideoTask(shotId, engineOverride=None):
                         useRef2vaBase=(not is24Gb and engine == "h3_ref2va"),
                     )
                 elif (not is24Gb) and (engine == "h3_ref2va" or (engine == "h3_fl2va" and not upLast and (voiceRefUpload or charRefUploads))):
-                    compiledPrompt = compileFl2vaVideoPrompt(shotRow, hasLastFrame=False)
+                    compiledPrompt = compileFl2vaVideoPrompt(shotRow, hasLastFrame=False, visualStyle=pStyle)
                     wfVideo = buildH3Ref2vaWorkflow(
                         compiledPrompt,
                         upFirst,
@@ -1665,7 +1765,7 @@ def enqueueShotVideoTask(shotId, engineOverride=None):
                         enableUpscale3d=enableUpscale,
                     )
                 elif engine == "fasth3":
-                    compiledPrompt = compileFl2vaVideoPrompt(shotRow, hasLastFrame=False)
+                    compiledPrompt = compileFl2vaVideoPrompt(shotRow, hasLastFrame=False, visualStyle=pStyle)
                     wfVideo = buildFastH3Workflow(
                         compiledPrompt,
                         upFirst,
@@ -1676,7 +1776,7 @@ def enqueueShotVideoTask(shotId, engineOverride=None):
                         enableUpscale3d=enableUpscale,
                     )
                 else:
-                    compiledPrompt = compileFl2vaVideoPrompt(shotRow, hasLastFrame=bool(upLast))
+                    compiledPrompt = compileFl2vaVideoPrompt(shotRow, hasLastFrame=bool(upLast), visualStyle=pStyle)
                     wfVideo = buildH3Fl2vaWorkflow(
                         compiledPrompt,
                         upFirst,

@@ -199,12 +199,38 @@ def synthesizeShotDialogueAudio(shotId, forceRegenerate=False):
 
     fileName = f"shot_{shotId}_tts_{int(time.time())}.wav"
     outPath = AUDIO_DIR / fileName
-    outPath.write_bytes(wavBytes)
+    rawPath = AUDIO_DIR / f"raw_{fileName}"
+    rawPath.write_bytes(wavBytes)
+
+    # 商业短剧配音节奏校准：将偏慢的默认语速稳妥提速至 1.22x，并在开头保留 0.35s 张嘴起手缓冲静音，防止第 0.00s 闭嘴出声
+    ffmpegBin = findFfmpegBinary("ffmpeg")
+    speedOk = False
+    try:
+        spRes = subprocess.run(
+            [
+                ffmpegBin, "-v", "error", "-y", "-i", str(rawPath),
+                "-af", "silenceremove=start_periods=1:start_threshold=-42dB:stop_periods=-1:stop_duration=0.15:stop_threshold=-42dB,atempo=1.22,adelay=350|350,highpass=f=75",
+                "-ar", "22050", "-ac", "1", str(outPath),
+            ],
+            capture_output=True, text=True, timeout=20,
+        )
+        if spRes.returncode == 0 and outPath.exists() and outPath.stat().st_size > 1024:
+            speedOk = True
+    except Exception:
+        pass
+    if not speedOk:
+        outPath.write_bytes(wavBytes)
+    if rawPath.exists():
+        try:
+            rawPath.unlink()
+        except Exception:
+            pass
+
     relUrl = f"/media/audio/{fileName}"
 
     audioDur = _probeAudioDurationSec(outPath)
-    # 根据真实配音时长反推镜头时长（保留 0.6s 呼吸留白，上限 8.0s，下限 3.0s）
-    recommendedShotDur = round(min(8.0, max(3.0, audioDur + 0.60)), 2) if audioDur > 0.2 else float(shot.get("durationSec") or 5.0)
+    # 根据真实配音时长反推紧凑镜头时长（保留 0.35s 呼吸气口，上限 7.0s，下限 2.6s）
+    recommendedShotDur = round(min(7.0, max(2.6, audioDur + 0.35)), 2) if audioDur > 0.2 else float(shot.get("durationSec") or 4.5)
 
     with closing(getDbConnection()) as conn:
         conn.execute(
