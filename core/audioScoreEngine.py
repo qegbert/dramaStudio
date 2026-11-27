@@ -213,12 +213,16 @@ def buildEpisodeSfxStem(timelineManifest, validShots, totalDurationSec, outSfxWa
     return len(events)
 
 
-def generateEpisodeBgmWithCloud(episodeId):
+def generateEpisodeBgmWithCloud(episodeId, customPrompt=""):
     """
-    调用无影云端 ComfyUI 的音乐大模型（优先探测 ACE-Step 1.5 / MiniMax-Music 3 节点）为指定剧集生成专属情绪配乐。
-    若云端未开机或暂无对应音乐节点，返回明确提示供前端展示（合轴时会自动无缝回退内置古风底乐）。
+    调用无影云端 ComfyUI 的 MiniMax-Music 3 大模型为指定剧集生成专属情绪配乐并入库。
     """
-    from .comfyBridge import checkComfyStatus, _DIRECT_HTTP_OPENER
+    from .comfyBridge import (
+        checkComfyStatus,
+        buildMiniMaxMusic3Workflow,
+        _submitAndPollComfyWorkflow,
+        _DIRECT_HTTP_OPENER,
+    )
 
     st = checkComfyStatus()
     if not st.get("online"):
@@ -226,13 +230,67 @@ def generateEpisodeBgmWithCloud(episodeId):
 
     endpoint = st["endpoint"].rstrip("/")
     try:
-        with _DIRECT_HTTP_OPENER.open(f"{endpoint}/object_info", timeout=10) as r:
-            objInfo = json.loads(r.read().decode("utf-8"))
+        with _DIRECT_HTTP_OPENER.open(f"{endpoint}/object_info/MiniMaxMusic3TextEncode", timeout=10) as r:
+            nodeCheck = json.loads(r.read().decode("utf-8"))
+        if "MiniMaxMusic3TextEncode" not in nodeCheck:
+            raise RuntimeError("当前无影 ComfyUI 未加载 MiniMaxMusic3TextEncode 节点。")
     except Exception as err:
-        raise RuntimeError(f"获取云端 ComfyUI 节点信息失败: {err}")
+        raise RuntimeError(f"检查云端 MiniMax-Music 3 节点失败: {err}")
 
-    musicNodes = [k for k in objInfo.keys() if "music" in k.lower() or "acestep" in k.lower() or "ace_step" in k.lower()]
-    if not musicNodes:
-        raise RuntimeError("当前无影 ComfyUI 实例未加载音乐生成节点（可直接使用合轴内置古风氛围底乐 + 动作音效踩点）。")
+    with closing(getDbConnection()) as conn:
+        ep = conn.execute("SELECT * FROM episodes WHERE id=?", (episodeId,)).fetchone()
+        if not ep:
+            raise ValueError(f"未找到剧集 #{episodeId}")
+        proj = conn.execute("SELECT * FROM projects WHERE id=?", (ep["projectId"],)).fetchone()
+        shots = conn.execute("SELECT durationSec FROM shots WHERE episodeId=?", (episodeId,)).fetchall()
 
-    return {"ok": True, "availableMusicNodes": musicNodes[:10], "episodeId": episodeId}
+    totalDur = sum(float(s["durationSec"] or 4.0) for s in shots) if shots else 30.0
+    targetDur = max(25.0, min(90.0, round(totalDur + 4.0, 1)))
+    genre = str(proj["genre"] if proj else "").lower()
+
+    if customPrompt and str(customPrompt).strip():
+        caption = str(customPrompt).strip()
+    elif any(k in genre for k in ("现代", "都市", "悬疑", "现代")):
+        caption = "Dark cinematic modern suspense drama score, moody analog synth bass, tense muted strings, minimal sparse percussion, atmospheric minor key, instrumental underscore"
+    else:
+        caption = (
+            "Dark cinematic Chinese historical palace intrigue score, tense low bowed erhu ostinato, "
+            "sparse deep guzheng plucks, subtle muffled war drum pulse, nocturnal suspense atmosphere, "
+            "minor key, pure instrumental film underscore, no vocals"
+        )
+
+    wf = buildMiniMaxMusic3Workflow(caption=caption, durationSec=targetDur, lyrics="[Instrumental]", steps=30)
+    promptId, audioUrl, audioPath = _submitAndPollComfyWorkflow(wf, endpoint, expectedType="audio", timeoutSec=600)
+
+    # 转为标准 44.1kHz 立体声 WAV 以保证混音最稳
+    wavName = f"ep_{episodeId}_music3_{int(time.time())}.wav"
+    wavPath = AUDIO_DIR / wavName
+    conv = subprocess.run(
+        ["ffmpeg", "-v", "error", "-y", "-i", str(audioPath), "-ar", "44100", "-ac", "2", str(wavPath)],
+        capture_output=True, text=True, timeout=30,
+    )
+    if conv.returncode == 0 and wavPath.exists() and wavPath.stat().st_size > 1024:
+        finalUrl = f"/media/audio/{wavName}"
+        try:
+            Path(audioPath).unlink()
+        except Exception:
+            pass
+    else:
+        finalUrl = audioUrl
+
+    with closing(getDbConnection()) as conn:
+        conn.execute(
+            "UPDATE episodes SET bgmAudioUrl=?, bgmPrompt=?, updatedAt=? WHERE id=?",
+            (finalUrl, caption, time.time(), episodeId),
+        )
+        conn.commit()
+
+    return {
+        "ok": True,
+        "episodeId": episodeId,
+        "engine": "MiniMax-Music 3",
+        "promptId": promptId,
+        "bgmAudioUrl": finalUrl,
+        "durationSec": targetDur,
+        "caption": caption,
+    }

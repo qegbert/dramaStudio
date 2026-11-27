@@ -25,7 +25,7 @@ import urllib.error
 from pathlib import Path
 from contextlib import closing
 
-from .studioStore import getDbConnection, KEYFRAMES_DIR, VIDEOS_DIR, ASSETS_DIR, recordShotCandidate
+from .studioStore import getDbConnection, KEYFRAMES_DIR, VIDEOS_DIR, ASSETS_DIR, AUDIO_DIR, recordShotCandidate
 from .directorPlanner import (
     compileFl2vaVideoPrompt,
     compileWan22VideoPrompt,
@@ -834,6 +834,52 @@ def buildWan22MoeWorkflow(promptText, firstFrameUploadedName, width=1280, height
     }
 
 
+def buildMiniMaxMusic3Workflow(caption, durationSec=35.0, lyrics="[Instrumental]", steps=30, seed=None):
+    """
+    构建无影云端 MiniMax-Music 3 专属短剧情绪配乐生成工作流：
+    严格对齐官方节点签名（minimax_music3_dit_fp16 + minimax_music3_text_encoder + minimax_music3_dav）。
+    """
+    if not seed or seed < 0:
+        seed = random.randint(1, 2147483647)
+    dur = round(max(15.0, min(180.0, float(durationSec or 35.0))), 2)
+    return {
+        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "minimax_music3_dit_fp16.safetensors", "weight_dtype": "default"}},
+        "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": "minimax_music3_text_encoder_pruned_int8_convrot.safetensors", "type": "minimax", "device": "default"}},
+        "3": {"class_type": "VAELoader", "inputs": {"vae_name": "minimax_music3_dav.safetensors"}},
+        "4": {
+            "class_type": "MiniMaxMusic3TextEncode",
+            "inputs": {
+                "clip": ["2", 0],
+                "caption": caption,
+                "lyrics": lyrics,
+                "seed": seed,
+                "max_duration": dur,
+                "cfg_scale": 1.7,
+                "top_k": 50,
+            },
+        },
+        "5": {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["4", 0]}},
+        "6": {"class_type": "EmptyMiniMaxMusic3LatentAudio", "inputs": {"seconds": dur, "batch_size": 1}},
+        "7": {
+            "class_type": "KSampler",
+            "inputs": {
+                "model": ["1", 0],
+                "positive": ["4", 0],
+                "negative": ["5", 0],
+                "latent_image": ["6", 0],
+                "seed": seed,
+                "steps": int(steps or 30),
+                "cfg": 1.7,
+                "sampler_name": "euler",
+                "scheduler": "simple",
+                "denoise": 1.0,
+            },
+        },
+        "8": {"class_type": "VAEDecodeAudio", "inputs": {"samples": ["7", 0], "vae": ["3", 0]}},
+        "9": {"class_type": "SaveAudio", "inputs": {"audio": ["8", 0], "filename_prefix": f"DS_MUSIC3_{int(time.time())}"}},
+    }
+
+
 def _submitAndPollComfyWorkflow(workflowDict, comfyEndpoint, expectedType="image", timeoutSec=1800):
     """提交工作流到 ComfyUI 并轮询直至下载产物（带跨网超时放宽与自动重试）"""
     endpoint = comfyEndpoint.rstrip("/")
@@ -882,7 +928,7 @@ def _submitAndPollComfyWorkflow(workflowDict, comfyEndpoint, expectedType="image
 
         outputs = entry.get("outputs") or {}
         for _, nodeOut in outputs.items():
-            mediaItems = nodeOut.get("gifs") or nodeOut.get("videos") or nodeOut.get("images") or []
+            mediaItems = nodeOut.get("gifs") or nodeOut.get("videos") or nodeOut.get("images") or nodeOut.get("audio") or []
             for item in mediaItems:
                 fname = item.get("filename")
                 subfolder = item.get("subfolder", "")
@@ -890,9 +936,12 @@ def _submitAndPollComfyWorkflow(workflowDict, comfyEndpoint, expectedType="image
                 if not fname:
                     continue
                 isVideoFile = fname.lower().endswith((".mp4", ".webm", ".mov"))
+                isAudioFile = fname.lower().endswith((".wav", ".flac", ".mp3", ".ogg"))
                 if expectedType == "video" and not isVideoFile:
                     continue
-                if expectedType == "image" and isVideoFile:
+                if expectedType == "image" and (isVideoFile or isAudioFile):
+                    continue
+                if expectedType == "audio" and not isAudioFile:
                     continue
 
                 query = urllib.parse.urlencode({"filename": fname, "subfolder": subfolder, "type": ftype})
@@ -915,6 +964,12 @@ def _submitAndPollComfyWorkflow(workflowDict, comfyEndpoint, expectedType="image
                     localPath = VIDEOS_DIR / localName
                     localPath.write_bytes(fileBytes)
                     return promptId, f"/media/videos/{localName}", localPath
+                elif expectedType == "audio":
+                    ext = Path(fname).suffix.lower() or ".flac"
+                    localName = f"bgm_music3_{promptId[:8]}_{int(time.time())}{ext}"
+                    localPath = AUDIO_DIR / localName
+                    localPath.write_bytes(fileBytes)
+                    return promptId, f"/media/audio/{localName}", localPath
                 else:
                     localName = f"shot_kf_{promptId[:8]}_{int(time.time())}.png"
                     localPath = KEYFRAMES_DIR / localName
